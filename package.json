@@ -1,0 +1,79 @@
+{
+  "name": "scriptio",
+  "type": "module",
+  "version": "0.0.1-beta.1",
+  "packageManager": "pnpm@11.7.0",
+  "description": "A project-level task runner driven by scriptio.config.ts for interactive and CI workflows.",
+  "author": {
+    "name": "Michael Cocova",
+    "email": "michael.cocova@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelcocova/scriptio.git"
+  },
+  "keywords": [
+    "task",
+    "cli",
+    "build",
+    "deploy",
+    "monorepo",
+    "automation"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "bin": {
+    "scriptio": "./dist/index.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test:ui": "vitest --ui",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit",
+    "commit": "cz",
+    "prepublishOnly": "pnpm run build",
+    "lint:fix": "eslint --fix --cache",
+    "format": "prettier --write \"**/*.{ts,js,vue,json,md}\"",
+    "prepare": "simple-git-hooks",
+    "release": "bumpp -r --commit \"chore: release v%s\" --push --tag"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.7.0",
+    "jiti": "^2.7.0"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^9.3.0",
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
+    "@commitlint/types": "^21.0.1",
+    "@types/node": "^26.1.1",
+    "@vitest/ui": "4.1.11",
+    "bumpp": "^11.1.0",
+    "commitizen": "^4.3.2",
+    "cz-git": "^1.13.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-format": "^2.0.1",
+    "lint-staged": "^17.0.7",
+    "prettier": "^3.8.4",
+    "simple-git-hooks": "^2.13.1",
+    "tsdown": "^0.22.5",
+    "typescript": "~5.6.3",
+    "unplugin-unused": "^0.5.7",
+    "unrun": "^0.3.1",
+    "vitest": "^4.1.10"
+  },
+  "config": {
+    "commitizen": {
+      "path": "node_modules/cz-git"
+    }
+  }
+}
