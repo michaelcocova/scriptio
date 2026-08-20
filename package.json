@@ -1,7 +1,7 @@
 {
   "name": "scriptio",
   "type": "module",
-  "version": "0.0.1-beta.1",
+  "version": "0.0.1-beta.2",
   "packageManager": "pnpm@11.7.0",
   "description": "A project-level task runner driven by scriptio.config.ts for interactive and CI workflows.",
   "author": {
