@@ -48,7 +48,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
-    "jiti": "^2.7.0"
+    "jiti": "^2.7.0",
+    "kolorist": "^1.8.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.3.0",

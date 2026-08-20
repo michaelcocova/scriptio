@@ -3,8 +3,10 @@ import type { HandleContext, ScriptCliConfig, Step, StepValue } from './types'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { intro, log, outro } from '@clack/prompts'
+import { bold, options as colorOptions, cyan, dim } from 'kolorist'
 import { buildArgs, extractConfigArg, getPrimaryParam, getStepParams, parseArgs } from './args'
 import { defineConfig, loadConfig } from './config'
+import { isCliEntry } from './is-cli-entry'
 import { askStep } from './prompts'
 import { runCommands } from './runner'
 import { loadState, saveState } from './state'
@@ -120,17 +122,28 @@ function initialValue(step: Step): StepValue | undefined {
 }
 
 function printHelp(config?: ScriptCliConfig) {
-  const stepLines = config
-    ? config.steps
-        .map(step => `  ${formatParamLabel(step)} <${step.type === 'select' ? 'value' : 'true|false'}>  ${step.message}`)
-        .join('\n')
-    : '  (加载配置文件后显示 step 参数)'
-  console.log(`用法：scriptio [参数]
-步骤参数：
-${stepLines}
-通用选项：
-  -C, --config <path>  指定配置文件（默认 scriptio.config.ts）
-  -h, --help  显示帮助`)
+  colorOptions.enabled = supportsColor()
+
+  const stepLines = !config || config.steps.length === 0
+    ? [`  ${dim('Available after loading scriptio.config.ts')}`]
+    : config.steps.map(step => formatStepHelpLine(step))
+
+  // prettier-ignore
+  const helpMessage = [
+    `${bold('Usage:')} scriptio [OPTION]...`,
+    '',
+    dim('Run project tasks defined in scriptio.config.ts.'),
+    dim('When running in TTY, the CLI will start in interactive mode.'),
+    '',
+    bold('Options:'),
+    formatHelpLine('-C, --config PATH', 'use a specific config file'),
+    formatHelpLine('-h, --help', 'display this help message'),
+    '',
+    bold('Step Options:'),
+    ...stepLines,
+  ].join('\n')
+
+  process.stdout.write(`${helpMessage}\n`)
 }
 
 function flagName(step: Step): string {
@@ -145,11 +158,31 @@ function formatParamLabel(step: Step): string {
   return params.join(', ')
 }
 
+function formatHelpLine(flag: string, description: string): string {
+  return `  ${cyan(flag.padEnd(34))}${description}`
+}
+
+function formatStepHelpLine(step: Step): string {
+  const flag = step.type === 'select'
+    ? `${formatParamLabel(step)} VALUE`
+    : formatParamLabel(step)
+
+  return formatHelpLine(flag, step.message)
+}
+
 function hasHelpFlag(argv: string[]): boolean {
   return argv.includes('--help') || argv.includes('-h')
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function supportsColor(): boolean {
+  return Boolean(process.stdout.isTTY)
+    && !('NO_COLOR' in process.env)
+    && process.env.FORCE_COLOR !== '0'
+}
+
+// pnpm 的 bin 通过符号链接启动，argv[1] 与 import.meta.url 未必同路径，
+// 这里统一按真实路径比较，避免 CLI 被静默跳过。
+if (isCliEntry(process.argv[1], import.meta.url)) {
   main().then(
     (code) => {
       process.exit(code)

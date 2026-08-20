@@ -13,6 +13,9 @@ importers:
       jiti:
         specifier: ^2.7.0
         version: 2.7.0
+      kolorist:
+        specifier: ^1.8.0
+        version: 1.8.0
     devDependencies:
       "@antfu/eslint-config":
         specifier: ^9.3.0
@@ -3074,6 +3077,12 @@ packages:
     resolution:
       {
         integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==,
+      }
+
+  kolorist@1.8.0:
+    resolution:
+      {
+        integrity: sha512-Y+60/zizpJ3HRH8DCss+q95yr6145JXZo46OTpFvDZWLfRCE4qChOyk1b26nMaNpfHHgxagk9dXT5OP0Tfe+dQ==,
       }
 
   levn@0.4.1:
@@ -6501,6 +6510,8 @@ snapshots:
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
+
+  kolorist@1.8.0: {}
 
   levn@0.4.1:
     dependencies:

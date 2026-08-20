@@ -1,12 +1,14 @@
 import type { ScriptCliConfig } from '../src/types'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildArgs, parseArgs } from '../src/args'
 import { loadConfig } from '../src/config'
 import { main } from '../src/index'
+import { isCliEntry } from '../src/is-cli-entry'
 
 const originalIsTTY = process.stdout.isTTY
 
@@ -38,13 +40,18 @@ export default defineConfig({
 
   it('prints help without requiring a config file', async () => {
     const cwd = createTempDir()
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     vi.spyOn(process, 'cwd').mockReturnValue(cwd)
 
     const code = await main(['--help'])
 
     expect(code).toBe(0)
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('默认 scriptio.config.ts'))
+    expect(stdoutSpy).toHaveBeenCalled()
+    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Usage: scriptio [OPTION]...')
+    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Run project tasks defined in scriptio.config.ts.')
+    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Options:')
+    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Step Options:')
+    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('display this help message')
   })
 
   it('parses select params with equals syntax without skipping later args', () => {
@@ -80,6 +87,22 @@ export default defineConfig({
       app: 'web',
       mode: 'build',
     })
+  })
+
+  it('matches symlinked bin entries by real path', () => {
+    const dir = createTempDir()
+    const real = join(dir, 'index.mjs')
+    const link = join(dir, 'node_modules', 'scriptio', 'index.mjs')
+    mkdirSync(dirname(link), {
+      recursive: true,
+    })
+    writeFileSync(real, '')
+    symlinkSync(real, link)
+
+    const moduleUrl = pathToFileURL(realpathSync(real)).href
+
+    expect(isCliEntry(link, moduleUrl)).toBe(true)
+    expect(isCliEntry(link, pathToFileURL(join(dir, 'other.mjs')).href)).toBe(false)
   })
 
   it('builds args with the first param as the primary output flag', () => {
