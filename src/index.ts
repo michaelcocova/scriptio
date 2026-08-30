@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import type { HandleContext, ScriptCliConfig, Step, StepValue } from './types'
-import { spawn } from 'node:child_process'
+import type { CommandContext, ScriptCliConfig, Step, StepValue } from './types'
 import process from 'node:process'
 import { intro, log, outro } from '@clack/prompts'
 import { bold, options as colorOptions, cyan, dim } from 'kolorist'
@@ -12,7 +11,7 @@ import { runCommands } from './runner'
 import { loadState, saveState } from './state'
 
 export { defineConfig }
-export type { ConfirmStep, HandleContext, RunOptions, RunResult, ScriptCliConfig, SelectStep, Step, StepParam, StepValue } from './types'
+export type { AutocompleteMultiselectStep, AutocompleteStep, Command, CommandContext, ConfirmStep, Hooks, MultiselectStep, Run, ScriptCliConfig, SelectStep, Step, StepParam, StepValue, TextStep } from './types'
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const cwd = process.cwd()
@@ -33,29 +32,31 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const values = await resolveValues(config, input.values, state)
   saveState(cwd, values)
   const args = buildArgs(config, values)
-  const context: HandleContext = {
-    args,
+  const context: CommandContext = {
     run: runCommands,
-    spawn,
     values,
+  }
+  const commandKey = values[config.steps[0].key]
+  const command = typeof commandKey === 'string'
+    ? config.commands[commandKey]
+    : undefined
+  if (!command) {
+    throw new Error(`未找到命令：${typeof commandKey === 'string' ? commandKey : String(commandKey)}，请检查 commands 配置`)
   }
 
   intro('scriptio')
   log.info(`参数：${args.join(' ') || '(无)'}`)
   try {
-    const result = await config.handle(context)
-    if (typeof result === 'string' || Array.isArray(result)) {
-      await runCommands(result)
-    }
-    await config.success?.(context)
+    await command(context)
+    await config.hooks?.success?.(context)
     outro('执行成功')
     return 0
   } catch (error) {
-    await config.error?.(error, context)
+    await config.hooks?.error?.(error, context)
     outro('执行失败')
     return (error as { exitCode?: number }).exitCode ?? 1
   } finally {
-    await config.finally?.(context)
+    await config.hooks?.finally?.(context)
   }
 }
 
@@ -73,26 +74,25 @@ async function resolveValues(
   }
   const missing: string[] = []
   for (const step of config.steps) {
-    const value = provided[step.key]
-      ?? stateValue(step, availableState[step.key], config.defaultValues?.[step.key])
-      ?? initialValue(step)
+    if (step.condition && !step.condition(values)) {
+      continue
+    }
+    const isProvided = provided[step.key] !== undefined
+    const value = isProvided
+      ? provided[step.key]
+      : stateValue(step, availableState[step.key], config.defaultValues?.[step.key])
+        ?? initialValue(step)
     if (value === undefined) {
       missing.push(`--${flagName(step)}`)
       continue
     }
     Reflect.set(values, step.key, value)
+    if (interactive && !isProvided) {
+      Reflect.set(values, step.key, await askStep(step, value))
+    }
   }
   if (!interactive && missing.length > 0) {
     throw new Error(`非交互环境缺少参数：${missing.join('、')}`)
-  }
-  if (!interactive) {
-    return values
-  }
-  for (const step of config.steps) {
-    if (provided[step.key] !== undefined)
-      continue
-    const value = await askStep(step, values[step.key])
-    Reflect.set(values, step.key, value)
   }
   return values
 }
@@ -109,6 +109,14 @@ function stateValue(
   if (step.type === 'confirm') {
     return typeof value === 'boolean' ? value : undefined
   }
+  if (step.type === 'text') {
+    return typeof value === 'string' ? value : undefined
+  }
+  if (step.type === 'multiselect' || step.type === 'autocompleteMultiselect') {
+    return Array.isArray(value)
+      ? value.filter(item => typeof item === 'string' && step.options.some(option => option.value === item))
+      : undefined
+  }
   return typeof value === 'string' && step.options.some(option => option.value === value)
     ? value
     : undefined
@@ -117,6 +125,12 @@ function stateValue(
 function initialValue(step: Step): StepValue | undefined {
   if (step.type === 'confirm') {
     return false
+  }
+  if (step.type === 'text') {
+    return ''
+  }
+  if (step.type === 'multiselect' || step.type === 'autocompleteMultiselect') {
+    return []
   }
   return step.options[0]?.value
 }
@@ -163,9 +177,9 @@ function formatHelpLine(flag: string, description: string): string {
 }
 
 function formatStepHelpLine(step: Step): string {
-  const flag = step.type === 'select'
-    ? `${formatParamLabel(step)} VALUE`
-    : formatParamLabel(step)
+  const flag = step.type === 'confirm'
+    ? formatParamLabel(step)
+    : `${formatParamLabel(step)} VALUE`
 
   return formatHelpLine(flag, step.message)
 }

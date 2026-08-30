@@ -2,7 +2,7 @@
 
 `scriptio` 是一个项目级通用任务 CLI。
 
-它不关心项目业务，只负责加载项目根目录的 `scriptio.config.ts`，根据 `steps` 收集参数，再将最终结果交给 `handle` 执行。
+它不关心项目业务，只负责加载项目根目录的 `scriptio.config.ts`，根据 `steps` 收集参数，再按第一个 step 的 value 自动路由到 `commands` 执行。
 
 它适用于将项目中分散的 `dev`、`build`、`deploy`、`clean` 等命令统一到一个交互式入口，同时支持命令行参数和 CI 非交互执行。
 
@@ -97,50 +97,55 @@ my-app/
 
 ### 之后
 
-使用一个 `scriptio.config.ts` 描述任务和参数：
+使用一个 `scriptio.config.ts` 描述任务和参数，下面的示例同时展示了可搜索多选和条件步骤：
 
 ```ts
 import { defineConfig } from "scriptio";
 
+const APP_PACKAGES = {
+  admin: "@pg/admin",
+  client: "@pg/client",
+  docs: "@pg/docs",
+  server: "@pg/server",
+  www: "@pg/www",
+} as const;
+
+type AppName = keyof typeof APP_PACKAGES;
+
+function taskCommand(task: string, apps: AppName[]) {
+  const filters = apps.map((app) => `--filter=${APP_PACKAGES[app]}`).join(" ");
+  return `pnpm turbo run ${task} ${filters}`;
+}
+
+function selectedApps(values: Record<string, unknown>): AppName[] {
+  return (Array.isArray(values.apps) ? values.apps : []) as AppName[];
+}
+
 export default defineConfig({
-  defaultValues: {
-    app: "all",
-    confirmDeploy: false,
-    env: "local",
-    mode: "dev",
+  commands: {
+    build: async ({ run, values }) => {
+      await run(taskCommand("build", selectedApps(values)));
+    },
+
+    clean: async ({ run, values }) => {
+      if (values.confirmClean) {
+        await run("pnpm clean");
+      }
+    },
+
+    dev: async ({ run, values }) => {
+      await run(taskCommand("dev", selectedApps(values)));
+    },
+
+    lint: async ({ run, values }) => {
+      await run(taskCommand("lint", selectedApps(values)));
+    },
   },
 
-  handle: async ({ run, values }) => {
-    if (values.mode === "clean") {
-      await run("pnpm clean");
-      return;
-    }
-
-    if (values.mode === "dev") {
-      if (values.app === "all") {
-        await run('pnpm --filter "./apps/*" --parallel dev');
-      } else {
-        await run(`pnpm -F ${values.app} dev`);
-      }
-
-      return;
-    }
-
-    if (values.mode === "build") {
-      if (values.app === "all") {
-        await run(
-          `pnpm --filter "./apps/*" --workspace-concurrency=2 build:${values.env}`,
-        );
-      } else {
-        await run(`pnpm -F ${values.app} build:${values.env}`);
-      }
-
-      return;
-    }
-
-    if (values.mode === "deploy" && values.confirmDeploy) {
-      await run(`node scripts/deploy.mjs --env ${values.env}`);
-    }
+  defaultValues: {
+    apps: ["www", "client"],
+    confirmClean: false,
+    mode: "dev",
   },
 
   steps: [
@@ -157,11 +162,11 @@ export default defineConfig({
           value: "build",
         },
         {
-          label: "部署",
-          value: "deploy",
+          label: "代码检查",
+          value: "lint",
         },
         {
-          label: "清理",
+          label: "清理构建产物",
           value: "clean",
         },
       ],
@@ -170,55 +175,39 @@ export default defineConfig({
     },
 
     {
-      key: "app",
-      message: "选择应用",
+      key: "apps",
+      message: "选择应用（可搜索，空格多选）",
       options: [
         {
-          label: "全部应用",
-          value: "all",
+          label: "官网 (www)",
+          value: "www",
         },
         {
-          label: "Web",
-          value: "web",
+          label: "用户前端 (client)",
+          value: "client",
         },
         {
-          label: "Docs",
-          value: "docs",
+          label: "API 服务 (server)",
+          value: "server",
         },
         {
-          label: "Admin",
+          label: "管理后台 (admin)",
           value: "admin",
         },
+        {
+          label: "文档站 (docs)",
+          value: "docs",
+        },
       ],
-      param: ["--app", "-A"],
-      type: "select",
+      param: ["--apps", "-A"],
+      type: "autocompleteMultiselect",
     },
 
     {
-      key: "env",
-      message: "选择环境",
-      options: [
-        {
-          label: "本地环境",
-          value: "local",
-        },
-        {
-          label: "测试环境",
-          value: "staging",
-        },
-        {
-          label: "生产环境",
-          value: "production",
-        },
-      ],
-      param: ["--env", "-E"],
-      type: "select",
-    },
-
-    {
-      key: "confirmDeploy",
-      message: "确认部署？",
-      param: ["--deploy", "-D"],
+      condition: (values) => values.mode === "clean",
+      key: "confirmClean",
+      message: "确认清理构建产物？",
+      param: ["--clean", "-L"],
       type: "confirm",
     },
   ],
@@ -234,13 +223,13 @@ pnpm scriptio
 或者直接传入参数：
 
 ```bash
-pnpm scriptio --mode build --app web --env staging
+pnpm scriptio --mode build --apps www --apps client
 ```
 
 也可以使用短别名：
 
 ```bash
-pnpm scriptio -M build -A web -E staging
+pnpm scriptio -M build -A www -A client
 ```
 
 ## 交互模式
@@ -259,71 +248,52 @@ CLI 根据 `scriptio.config.ts` 中的 `steps` 自动进行交互。
 ? 选择任务
 ❯ 本地开发
   构建
-  部署
-  清理
+  代码检查
+  清理构建产物
 
-? 选择应用
-❯ 全部应用
-  Web
-  Docs
-  Admin
+? 选择应用（可搜索，空格多选）
+❯ ◉ 官网 (www)
+  ◉ 用户前端 (client)
+  ○ API 服务 (server)
+  ○ 管理后台 (admin)
+  ○ 文档站 (docs)
 
-? 选择环境
-❯ 本地环境
-  测试环境
-  生产环境
+只有选择了“清理构建产物”时，才会出现确认步骤：
+
+? 确认清理构建产物？
+❯ 否 / 是
 ```
 
-用户完成选择后，CLI 会得到最终结果：
+用户完成选择后，CLI 会得到最终结果 `values`，并自动执行：
 
 ```ts
-const values = {
-  app: "web",
-  confirmDeploy: false,
-  env: "staging",
-  mode: "build",
-};
+commands[values.mode];
 ```
 
-然后将结果交给：
-
-```ts
-handle({
-  args: _args,
-  run: _run,
-  spawn: _spawn,
-  values: _values,
-});
-```
+例如选择 `build` 时，自动执行 `commands.build`。
 
 ## 非交互模式
 
-当所有 step 都能通过命令行参数或 `defaultValues` 得到结果时，CLI 会跳过交互，直接执行 `handle`。
+当所有 step 都能通过命令行参数或 `defaultValues` 得到结果时，CLI 会跳过交互，直接执行对应的 `commands[values.mode]`。
 
 例如：
 
 ```bash
-pnpm scriptio --mode build --app web --env staging
+pnpm scriptio --mode build --apps www --apps client
 ```
 
-直接执行 Web 的 staging 构建。
+直接构建官网和用户前端，多选参数重复传入即可。
 
-构建全部应用：
+构建全部应用可以传全部选项：
 
 ```bash
-pnpm scriptio --mode build --app all --env production
+pnpm scriptio --mode build --apps www --apps client --apps server --apps admin --apps docs
 ```
 
-部署：
+清理时确认步骤才会生效：
 
 ```bash
-pnpm scriptio --mode deploy --env production --deploy
-```
-
-清理：
-
-```bash
-pnpm scriptio --mode clean
+pnpm scriptio --mode clean --clean
 ```
 
 这种模式适合 CI。
@@ -364,7 +334,7 @@ type StepParam = string | string[];
 
 当 `param` 是数组时：
 
-- 第一项作为最终生成 `args` 时使用的主参数
+- 第一项作为主参数参与命令回显
 - 所有项都会参与命令行解析
 - 建议避免与内置参数冲突，例如 `-C` 和 `-h`
 
@@ -417,15 +387,22 @@ scriptio.config.ts
 import { defineConfig } from "scriptio";
 
 export default defineConfig({
+  commands: {
+    build: async ({ run, values }) => {
+      if (values.clean) {
+        await run("pnpm clean");
+      }
+      await run("pnpm build");
+    },
+
+    dev: async ({ run }) => {
+      await run("pnpm dev");
+    },
+  },
+
   defaultValues: {
     clean: false,
     mode: "dev",
-  },
-
-  handle: async ({ run, values }) => {
-    if (values.clean) {
-      await run("pnpm clean");
-    }
   },
 
   steps: [
@@ -462,14 +439,50 @@ export default defineConfig({
 
 ```ts
 const config = defineConfig({
-  steps,
+  commands,
   defaultValues,
-  handle,
-  success,
-  error,
-  finally: finallyHook,
+  hooks,
+  steps,
 });
 ```
+
+### commands
+
+`commands` 是任务执行入口，key 与第一个 step 的 value 一一对应。
+
+例如第一个 step 是：
+
+```ts
+steps: [
+  {
+    key: "mode",
+    options: [
+      { label: "开发", value: "dev" },
+      { label: "构建", value: "build" },
+    ],
+    type: "select",
+  },
+];
+```
+
+对应：
+
+```ts
+const commands = {
+  build: async ({ run }) => {},
+  dev: async ({ run }) => {},
+};
+```
+
+执行 `--mode build` 时，Scriptio 自动调用 `commands.build`，不需要手写 `if (values.mode === 'build')` 分发。
+
+### defaultValues
+
+为 step 提供默认值，交互模式下作为默认选择，非交互模式下作为缺省参数。
+
+### hooks
+
+生命周期钩子，包含 `success`、`error`、`finally`。
 
 ### steps
 
@@ -477,13 +490,14 @@ const config = defineConfig({
 
 每个 step 包含：
 
-| 字段      | 说明                                               |
-| --------- | -------------------------------------------------- |
-| `key`     | 必填，结果保存到 `values[key]`                     |
-| `type`    | `select` 或 `confirm`                              |
-| `message` | 交互提示文案                                       |
-| `param`   | 对应的 CLI 参数，例如 `--env` 或 `['--env', '-E']` |
-| `options` | `select` 类型的可选项                              |
+| 字段        | 说明                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------- |
+| `key`       | 必填，结果保存到 `values[key]`                                                        |
+| `type`      | `select`、`confirm`、`multiselect`、`autocomplete`、`autocompleteMultiselect`、`text` |
+| `message`   | 交互提示文案                                                                          |
+| `param`     | 对应的 CLI 参数，例如 `--env` 或 `['--env', '-E']`                                    |
+| `options`   | 选项类步骤的可选项                                                                    |
+| `condition` | 可选函数，返回 `false` 时跳过该步骤                                                   |
 
 ### select
 
@@ -560,6 +574,129 @@ pnpm scriptio --deploy
 ```ts
 deploy === true;
 ```
+
+### multiselect
+
+`multiselect` 用于从选项中选择多个值（checkbox 多选）。
+
+```ts
+const step = {
+  key: "apps",
+  message: "选择应用",
+  options: [
+    {
+      label: "官网 (www)",
+      value: "www",
+    },
+    {
+      label: "用户前端 (client)",
+      value: "client",
+    },
+  ],
+  param: ["--apps", "-A"],
+  type: "multiselect",
+};
+```
+
+结果是一个数组：
+
+```ts
+const apps = values.apps; // ["www", "client"]
+```
+
+类型为：
+
+```ts
+type AppsValue = string[];
+```
+
+命令行重复传入参数：
+
+```bash
+pnpm scriptio --apps www --apps client
+```
+
+### autocompleteMultiselect
+
+`autocompleteMultiselect` 是可搜索的多选，配置与 `multiselect` 相同，适合选项较多的场景：
+
+```ts
+const step = {
+  key: "apps",
+  message: "选择应用",
+  options: [
+    // ...
+  ],
+  param: ["--apps", "-A"],
+  type: "autocompleteMultiselect",
+};
+```
+
+交互时可以直接输入关键字过滤选项，返回值和命令行传参方式都与 `multiselect` 一致。
+
+### autocomplete
+
+`autocomplete` 是可搜索单选，适合选项较多或需要模糊匹配的场景，返回单个字符串。
+
+```ts
+const step = {
+  key: "env",
+  message: "选择环境",
+  options: [
+    {
+      label: "测试环境",
+      value: "staging",
+    },
+    {
+      label: "生产环境",
+      value: "production",
+    },
+  ],
+  param: ["--env", "-E"],
+  type: "autocomplete",
+};
+```
+
+### text
+
+`text` 用于自由文本输入，不需要 `options`：
+
+```ts
+const step = {
+  key: "tag",
+  message: "发布版本号",
+  param: ["--tag", "-T"],
+  type: "text",
+};
+```
+
+结果：
+
+```ts
+const tag = values.tag; // "v1.0.0"
+```
+
+### 条件步骤
+
+`condition` 接收当前已解析的 `values`，返回 `false` 时跳过该步骤，不询问、也不出现在 `values` 中。
+
+```ts
+const step = {
+  condition: (values) => values.mode === "clean",
+  key: "confirmClean",
+  message: "确认清理构建产物？",
+  param: ["--clean", "-L"],
+  type: "confirm",
+};
+```
+
+条件按 `steps` 顺序判断，只能读取排在它前面的步骤的值：
+
+```bash
+pnpm scriptio --mode dev
+```
+
+不会询问 `confirmClean`，最终 `values` 中也没有 `confirmClean`。
 
 ## defaultValues
 
@@ -682,14 +819,25 @@ pnpm scriptio --mode build
 
 CI 不依赖上一次交互状态。
 
-## handle
+## commands
 
-`handle` 负责真正执行项目任务。
+`commands` 负责真正执行项目任务。
 
 ```ts
-handle: async ({ args: _args, run: _run, spawn: _spawn, values: _values }) => {
-  // 执行任务
+const commands = {
+  build: async ({ run, values }) => {
+    await run(`pnpm build:${values.env}`);
+  },
 };
+```
+
+每个 command 接收：
+
+```ts
+interface CommandContext {
+  run: Run;
+  values: Record<string, StepValue>;
+}
 ```
 
 ### values
@@ -706,18 +854,6 @@ const values = {
 };
 ```
 
-### args
-
-根据 step 的 `param` 生成的参数结果。
-
-例如：
-
-```ts
-const args = ["--mode", "build", "--app", "web", "--env", "production"];
-```
-
-具体参数结构由 CLI 实现决定。
-
 ### run
 
 推荐使用的命令执行器。
@@ -726,72 +862,77 @@ const args = ["--mode", "build", "--app", "web", "--env", "production"];
 await run("pnpm build");
 ```
 
-### spawn
-
-底层进程执行接口。
-
-用于需要直接控制 Node.js `child_process` 的场景。
-
 ## run
 
 `run` 是执行外部命令的主要 API。
 
-### 单个命令
+```ts
+type Run = (command: string | string[]) => Promise<void>;
+```
+
+### 单个字符串：串行
 
 ```ts
 await run("pnpm build");
 ```
 
-### 顺序执行
-
-```ts
-await run(["pnpm lint", "pnpm test", "pnpm build"]);
-```
-
-默认按照顺序执行：
+执行一个命令并等待完成：
 
 ```text
-pnpm lint
-    ↓
-pnpm test
-    ↓
-pnpm build
+run
+ ↓
+command
+ ↓
+完成
+ ↓
+继续
 ```
 
-前一个命令失败后，后续命令不会继续执行。
-
-### 并行执行
+### 字符串数组：并行
 
 ```ts
-await run(["pnpm lint", "pnpm test"], {
-  parallel: true,
-});
+await run(["pnpm -F web build", "pnpm -F docs build", "pnpm -F admin build"]);
 ```
 
-两个命令会同时执行。
-
-### 执行选项
+数组中的命令同时执行，逻辑等价于：
 
 ```ts
-await run("pnpm build", {
-  cwd: "apps/web",
+await Promise.all([
+  execute("pnpm -F web build"),
+  execute("pnpm -F docs build"),
+  execute("pnpm -F admin build"),
+]);
+```
 
-  env: {
-    NODE_OPTIONS: "--max-old-space-size=8192",
+V2 不再提供 `parallel` 选项，直接通过参数类型表达执行方式。
+
+### 复杂任务
+
+串行与并行可以组合：
+
+```ts
+const commands = {
+  build: async ({ run }) => {
+    await run("pnpm prepare");
+
+    await run(["pnpm build:web", "pnpm build:docs", "pnpm build:admin"]);
+
+    await run("pnpm summary");
   },
-
-  timeout: 60_000,
-});
+};
 ```
 
-支持：
+执行结构：
 
-| 参数       | 说明         |
-| ---------- | ------------ |
-| `cwd`      | 命令工作目录 |
-| `env`      | 额外环境变量 |
-| `timeout`  | 超时时间     |
-| `parallel` | 是否并行执行 |
+```text
+prepare
+   ↓
+┌───────────┬───────────┬───────────┐
+│ web       │ docs      │ admin     │
+└───────────┴───────────┴───────────┘
+   ↓
+summary
+```
 
 当命令返回非零退出码时，`run` 会抛出错误。
 
@@ -801,52 +942,29 @@ await run("pnpm build", {
 error.exitCode;
 ```
 
-## spawn
-
-`spawn` 是底层进程执行接口。
-
-一般情况下优先使用：
-
-```ts
-run();
-```
-
-只有在需要直接操作 Node.js child process 时使用：
-
-```ts
-spawn();
-```
-
-例如：
-
-- 自定义 stdio
-- 获取 child process
-- 监听进程事件
-- 自定义进程生命周期
-- 特殊进程控制
-
 ## 生命周期
 
-配置可以定义三个生命周期：
+配置可以定义三个生命周期钩子：
 
 ```ts
 export default defineConfig({
-  // ...
-
-  error: async (_error) => {
-    // 执行失败
+  commands: {
+    // ...
   },
 
-  finally: async () => {
-    // 始终执行
-  },
+  hooks: {
+    error: async (error, { values }) => {
+      // 执行失败
+      console.error(error);
+    },
 
-  handle: async ({ run: _run, values: _values }) => {
-    // 执行任务
-  },
+    finally: async ({ values }) => {
+      // 始终执行
+    },
 
-  success: async () => {
-    // 执行成功
+    success: async ({ values }) => {
+      // 执行成功
+    },
   },
 });
 ```
@@ -858,7 +976,7 @@ export default defineConfig({
     ↓
 解析参数
     ↓
-执行 handle
+执行 commands[values.mode]
     ↓
 success / error
     ↓
@@ -1023,7 +1141,9 @@ Step 定义
     ↓
 参数校验
     ↓
-任务执行
+Command 路由
+    ↓
+进程执行
     ↓
 生命周期
 ```
@@ -1082,11 +1202,14 @@ my-app/
                   resolved values
                         │
                         ▼
-                      handle
+              commands[values.mode]
+                        │
+                        ▼
+                      run()
                         │
                  ┌──────┴──────┐
                  ▼             ▼
-                run          spawn
+               串行           并行
                  │             │
                  └──────┬──────┘
                         ▼

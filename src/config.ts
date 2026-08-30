@@ -25,13 +25,17 @@ export async function loadConfig(cwd: string, configArg?: string): Promise<Scrip
   const config = await jiti.import(file, {
     default: true,
   })
+  const candidate = config as Partial<ScriptCliConfig> | undefined
   if (
-    !config
-    || typeof config !== 'object'
-    || !Array.isArray((config as ScriptCliConfig).steps)
-    || typeof (config as ScriptCliConfig).handle !== 'function'
+    !candidate
+    || typeof candidate !== 'object'
+    || !Array.isArray(candidate.steps)
+    || candidate.steps.length === 0
+    || !candidate.commands
+    || typeof candidate.commands !== 'object'
+    || Array.isArray(candidate.commands)
   ) {
-    throw new Error(`${file} 必须通过 defineConfig 导出 steps 和 handle`)
+    throw new Error(`${file} 必须通过 defineConfig 导出 steps 和 commands`)
   }
   return config as ScriptCliConfig
 }

@@ -60,6 +60,32 @@ export function parseArgs(argv: string[], config: ScriptCliConfig): ParsedArgs {
       continue
     }
 
+    if (step.type === 'text') {
+      const value = eq === -1 ? argv[i + 1] : token.slice(eq + 1)
+      if (value === undefined) {
+        throw new Error(`参数 --${name} 的值无效：${value ?? '(缺失)'}`)
+      }
+      values[step.key] = value
+      if (eq === -1) {
+        i++
+      }
+      continue
+    }
+
+    if (step.type === 'multiselect' || step.type === 'autocompleteMultiselect') {
+      const raw = eq === -1 ? argv[i + 1] : token.slice(eq + 1)
+      if (raw === undefined || !step.options.some(option => option.value === raw)) {
+        throw new Error(`参数 --${name} 的值无效：${raw ?? '(缺失)'}`)
+      }
+      const existing = values[step.key]
+      const current = Array.isArray(existing) ? existing : []
+      values[step.key] = [...current, raw]
+      if (eq === -1) {
+        i++
+      }
+      continue
+    }
+
     const value = eq === -1 ? argv[i + 1] : token.slice(eq + 1)
     if (value === undefined || !step.options.some(option => option.value === value)) {
       throw new Error(`参数 --${name} 的值无效：${value ?? '(缺失)'}`)
@@ -102,13 +128,22 @@ export function buildArgs(
       continue
     }
     const value = values[step.key]
+    if (value === undefined) {
+      continue
+    }
     if (typeof value === 'boolean') {
       if (value) {
         args.push(param)
       }
-    } else {
-      args.push(param, value)
+      continue
     }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        args.push(param, item)
+      }
+      continue
+    }
+    args.push(param, value)
   }
   return args
 }

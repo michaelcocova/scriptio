@@ -44,7 +44,8 @@
     "lint:fix": "eslint --fix --cache",
     "format": "prettier --write \"**/*.{ts,js,vue,json,md}\"",
     "prepare": "simple-git-hooks",
-    "release": "bumpp -r --commit \"chore: release v%s\" --push --tag"
+    "release": "bumpp -r --commit \"chore: release v%s\" --push --tag",
+    "example": "node ./dist/index.mjs"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",

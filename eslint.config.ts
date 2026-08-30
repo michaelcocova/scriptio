@@ -4,25 +4,13 @@ export default antfu({
   formatters: true,
   vue: true,
 }, {
-  files: ['**/*.ts', '**/*.mjs', '**/*.json'],
+  files: ['**/*.ts', '**/*.mjs', '**/*.json', '**/*.vue'],
   rules: {
     'no-console': 'warn',
     /**
      * 允许字符串中出现模板字符串占位符。
      */
     'no-template-curly-in-string': 'off',
-    /**
-     * 强制对象使用多行格式。
-     */
-    'object-curly-newline': [
-      'error',
-      {
-        ExportDeclaration: 'never',
-        ImportDeclaration: 'never',
-        ObjectExpression: 'always',
-        ObjectPattern: 'always',
-      },
-    ],
     /**
      * 自动排序 TypeScript enum 成员。
      */
@@ -56,7 +44,6 @@ export default antfu({
         type: 'alphabetical',
       },
     ],
-
     /**
      * 自动排序 import 中的具名成员。
      */
@@ -99,9 +86,7 @@ export default antfu({
     ],
 
     'style/brace-style': ['error', '1tbs'],
-
     'ts/ban-ts-comment': 'off',
-
     'unused-imports/no-unused-imports': 'error',
 
     'unused-imports/no-unused-vars': ['warn', {
@@ -112,7 +97,7 @@ export default antfu({
     }],
   },
 }, {
-  files: ['**/*.md', '**/*.md/*.{js,cjs,mjs,jsx,ts,tsx,vue}'],
+  files: ['**/*.md'],
   rules: {
     'no-console': 'off',
     'node/handle-callback-err': 'off',
