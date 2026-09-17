@@ -1,115 +1,120 @@
 # 使用
 
-## 普通项目
+Scriptio 的使用方式分为三类：交互选择、直接执行、查看脚本树。
 
-### 交互运行
-
-```bash
-pnpm scriptio
-```
-
-终端会按 `steps` 顺序提问：选择任务、选择应用、选择环境。条件步骤只在对应任务出现，例如选择“清理”时才会询问“确认清理构建产物？”。
-
-上次选择会自动保存到状态文件，下次交互直接作为默认值。
-
-### 直接传参
+## 交互选择
 
 ```bash
-pnpm scriptio --mode build --app web --env production
+scriptio
 ```
 
-短别名：
+在真实 TTY 中，Scriptio 会打开脚本选择器。可以输入脚本名搜索，方向键选择，Enter 执行，Ctrl+C 取消。
+
+设置 `group` 后，会先选择分组，再选择分组内脚本；未分组脚本直接出现在顶层。
+
+非交互环境中不能省略脚本名。例如 CI 中应该写：
 
 ```bash
-pnpm scriptio -M build -A web -E production
+scriptio build:test
 ```
 
-参数不齐时，剩余步骤仍会交互询问。多选配置重复传参：
+## 直接执行
 
 ```bash
-pnpm scriptio --mode build --apps admin --apps console --env production
+scriptio build:test
+scriptio build:test:sso
+scriptio lint
 ```
 
-### 常见场景
+脚本名必须与最终生成的 key 完全一致。找不到脚本时会输出：
 
-| 场景     | 命令                                                    |
-| -------- | ------------------------------------------------------- |
-| 本地开发 | `pnpm scriptio`                                         |
-| 手动构建 | `pnpm scriptio --mode build --app web --env production` |
-| 清理产物 | `pnpm scriptio --mode clean --clean`                    |
-
-## 流水线
-
-### 非交互执行
-
-CI 环境没有 TTY，Scriptio 不会等待输入。所有参数通过命令行或 `defaultValues` 提供，缺少参数时直接报错退出，避免流水线因等待输入而挂住。
-
-### GitLab CI 示例
-
-每个应用一个 job，环境名直接用 CI 变量：
-
-```yaml
-build_admin:
-  stage: Build Apps
-  script:
-    - pnpm scriptio --mode build --app admin --env $BRANCH_NAME
-
-build_console:
-  stage: Build Apps
-  script:
-    - pnpm scriptio --mode build --app console --env $BRANCH_NAME
+```text
+Unknown script "build:foo".
 ```
 
-不需要为每个分支、每个应用维护 `build:dev:admin`、`build:release:console` 这类组合脚本。
+并返回非零退出码。
 
-如果构建共享包，也可以一个 job 传多个应用：
+## 查看脚本树
 
-```yaml
-build_shared:
-  stage: Build Apps
-  script:
-    - pnpm scriptio --mode build --apps admin --apps console --apps sso --apps website --env $BRANCH_NAME
+```bash
+scriptio view
 ```
 
-Docker 构建、kubectl 部署等仍然按项目流水线组织，Scriptio 只负责参数收集和命令组装。
+`view` 会加载配置、展开 matrix、应用覆盖规则，然后打印最终脚本树。它不会执行脚本。
 
-### commands 组装
+如果配置中也有名为 `view` 的脚本，`scriptio view` 仍然优先执行内置查看命令。要执行同名脚本，可以无参数进入交互选择。
 
-实际命令在 `commands` 中根据 `values` 组装，逻辑只写一次：
+## 指定配置文件
+
+默认加载当前工作目录下的 `scriptio.config.ts`。可以通过 `-C` 或 `--config` 指定其他文件：
+
+```bash
+scriptio -C ./configs/project.ts build:test
+scriptio --config ./configs/project.ts view
+scriptio --config=./configs/project.ts --help
+```
+
+配置文件会通过 `jiti` 加载，可以直接写 TypeScript，不需要手动编译成 JavaScript。
+
+## 与 package.json 配合
+
+最简单的入口是：
+
+```json
+{
+  "scripts": {
+    "start": "scriptio"
+  }
+}
+```
+
+然后用 pnpm 把参数传给 Scriptio：
+
+```bash
+pnpm start build:test
+pnpm start view
+```
+
+在 monorepo 子项目中也可以只保留这个入口：
+
+```json
+{
+  "name": "@onecells/admin",
+  "scripts": {
+    "start": "scriptio"
+  }
+}
+```
+
+根项目可以通过 filter 调用子项目：
+
+```bash
+pnpm --filter=@onecells/admin start build:test
+pnpm -r --filter="./apps/*" start build:test
+```
+
+注意 `pnpm run --filter=@onecells/admin scriptio build:test` 会把 `scriptio` 当成 package script 名，不适合只保留 `start` 的写法。
+
+## 环境变量注入
+
+Scriptio 会在执行脚本前按脚本名计算 env，并通过子进程环境变量传入。命令中不用写 `cross-env`：
 
 ```ts
-function turboCommand(values: Record<string, unknown>) {
-  const mode = String(values.mode);
-  const app = String(values.app);
-  const env = String(values.env);
-  return `pnpm turbo run ${mode} --filter=@pg/${app} --env=${env}`;
-}
-
-export default defineConfig({
-  commands: {
-    build: async ({ run, values }) => {
-      await run(turboCommand(values));
-    },
-
-    dev: async ({ run, values }) => {
-      await run(turboCommand(values));
-    },
-  },
-});
+env: defineEnv(({ env }) => [
+  env("build:*", {
+    NODE_OPTIONS: "--max-old-space-size=8192",
+  }),
+]);
 ```
 
-本地交互、命令行传参和流水线共用同一份配置和同一套组装逻辑。执行 `--mode build` 时，Scriptio 自动调用 `commands.build`。
+```ts
+scripts: {
+  'build:test': 'vite build --mode test',
+}
+```
 
-## 对比
+## 终端体验
 
-| 场景      | 命令                                                        | 特点                       |
-| --------- | ----------------------------------------------------------- | -------------------------- |
-| 本地开发  | `pnpm scriptio`                                             | 交互选择，自动记忆上次选择 |
-| 手动构建  | `pnpm scriptio --mode build --app web --env production`     | 一条命令，参数可见         |
-| CI 流水线 | `pnpm scriptio --mode build --app admin --env $BRANCH_NAME` | 非交互，环境变量传参       |
+Scriptio 执行命令时继承标准输入输出，保留底层工具的颜色、spinner、进度条、交互提示和 stderr。子命令退出码会作为 Scriptio 的退出码。
 
-## 相关文章
-
-- [完整示例](/guide/examples)：查看完整配置与命令示例
-- [CLI 与参数](/guide/cli)：查看参数与别名
-- [配置](/guide/configuration)：了解 commands 与生命周期
+命令由系统 shell 执行，因此命令字符串本身仍然需要兼容目标系统。Scriptio 解决的是脚本组织、选择和环境变量注入，不会把 POSIX shell 语法自动转换成 Windows 语法。

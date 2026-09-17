@@ -1,67 +1,49 @@
-export type StepValue = string | boolean | string[]
-export type StepParam = string | string[]
-
-export interface StepBase {
-  condition?: (values: Record<string, StepValue>) => boolean
-  key: string
-  message: string
-  param?: StepParam
+export interface ScriptDefinition {
+  command: string
+  group?: string
+  label?: string
 }
 
-export interface SelectStep extends StepBase {
-  options: Array<{ label: string, value: string }>
-  type: 'select'
+export type ScriptCommand = string | ScriptDefinition
+export type ScriptMap = Record<string, ScriptCommand>
+export type ResolvedScriptMap = Record<string, ScriptDefinition>
+export type ScriptEnv = Record<string, string | undefined>
+export type ScriptEnvConfig = Record<string, ScriptEnv>
+export type ScriptConfig = ScriptMap | ScriptMap[]
+
+export interface UserConfig {
+  env?: ScriptEnvConfig
+  scripts: ScriptConfig
 }
 
-export interface ConfirmStep extends StepBase {
-  type: 'confirm'
+export type ScriptioConfig = UserConfig
+
+export type MatrixValues = Record<string, readonly string[]>
+export type MatrixContext<V extends MatrixValues> = {
+  [K in keyof V]: V[K][number]
 }
 
-export interface AutocompleteStep extends StepBase {
-  options: Array<{ label: string, value: string }>
-  type: 'autocomplete'
+export type MaybeFn<T, V extends MatrixValues> = T | ((values: MatrixContext<V>) => T)
+
+export type MatrixOptions<V extends MatrixValues> = {
+  group?: string
+  label?: MaybeFn<string, V>
+  name: MaybeFn<string, V>
+  values: V
+} & (
+  | { command: (context: MatrixContext<V>) => string, template?: never }
+  | { command?: never, template: string }
+)
+
+export interface ScriptsContext {
+  matrix: <const V extends MatrixValues>(options: MatrixOptions<V>) => ScriptMap
 }
 
-export interface MultiselectStep extends StepBase {
-  options: Array<{ label: string, value: string }>
-  type: 'multiselect'
-}
-
-export interface AutocompleteMultiselectStep extends StepBase {
-  options: Array<{ label: string, value: string }>
-  type: 'autocompleteMultiselect'
-}
-
-export interface TextStep extends StepBase {
-  type: 'text'
-}
-
-export type Step
-  = | AutocompleteMultiselectStep
-    | AutocompleteStep
-    | ConfirmStep
-    | MultiselectStep
-    | SelectStep
-    | TextStep
-
-export type Run = (command: string | string[]) => Promise<void>
-
-export interface CommandContext {
-  run: Run
-  values: Record<string, StepValue>
-}
-
-export type Command = (context: CommandContext) => void | Promise<void>
-
-export interface Hooks {
-  error?: (error: unknown, context: Pick<CommandContext, 'values'>) => void | Promise<void>
-  finally?: (context: Pick<CommandContext, 'values'>) => void | Promise<void>
-  success?: (context: Pick<CommandContext, 'values'>) => void | Promise<void>
-}
-
-export interface ScriptCliConfig {
-  commands: Record<string, Command>
-  defaultValues?: Record<string, StepValue>
-  hooks?: Hooks
-  steps: Step[]
+export interface EnvContext {
+  each: <const V extends readonly string[]>(
+    values: V,
+    pattern: string,
+    variables: (value: V[number]) => ScriptEnv,
+  ) => ScriptEnvConfig
+  env: (pattern: string, variables: ScriptEnv) => ScriptEnvConfig
 }

@@ -1,38 +1,30 @@
 ---
 layout: home
-
 hero:
   name: Scriptio
-  text: 项目级通用任务 CLI
-  tagline: 用一份 scriptio.config.ts 描述任务、参数和交互，本地开发与 CI 使用同一入口。
+  text: 用 TypeScript 管理项目脚本
+  tagline: 配置脚本、生成组合、匹配环境变量，然后直接执行。
   actions:
     - theme: brand
       text: 快速开始
       link: /guide/getting-started
     - theme: alt
-      text: 查看示例
+      text: 完整示例
       link: /guide/examples
-
 features:
-  - title: 交互式任务入口
-    details: 根据 steps 自动生成终端交互，支持选择、多选、可搜索和文本输入等输入类型。
-  - title: 条件步骤
-    details: 通过 condition 控制步骤是否出现，例如只在清理任务时确认清理。
-  - title: 本地与 CI 同构
-    details: 支持命令行参数、defaultValues 和状态记忆，非交互环境不会阻塞等待输入。
-  - title: 可搜索多选
-    details: 内置 multiselect 与 autocompleteMultiselect，选项再多也能快速定位。
-  - title: 状态记忆
-    details: 自动保存最近一次选择，下次交互直接使用上次结果作为默认值。
-  - title: Monorepo 友好
-    details: 不绑定业务，turbo、pnpm workspace 等 monorepo 任务都能统一管理。
+  - title: 普通脚本即可开始
+    details: scripts 中的名称对应一条命令，直接支持 TypeScript 配置。
+  - title: Matrix 生成组合
+    details: 每个名称只展开自身变量，支持 command 函数和 template 字符串。
+  - title: 环境变量按规则匹配
+    details: 成熟 Glob 匹配、包含与排除、按声明顺序覆盖，undefined 删除继承值。
+  - title: 两种执行方式
+    details: 无参数时搜索选择，也可直接输入 scriptio build:test:sso。
+  - title: 保留原始终端体验
+    details: 命令继承终端输入输出，保留颜色、进度条和交互能力。
+  - title: 与构建工具无关
+    details: Turbo、Vite、pnpm 和其他工具都是普通命令，核心只负责执行。
 ---
-
-## 为什么用 Scriptio
-
-项目里最常用的命令，往往不是一条 `pnpm dev` 或 `pnpm build`，而是“某个任务 + 某个应用 + 某个环境”的组合。脚本数量会随着应用和环境增长而膨胀，交互、CI 和默认值还要各自维护。
-
-Scriptio 用一份 `scriptio.config.ts` 描述任务和参数，让交互选择、命令行传参和 CI 执行共用同一个入口。
 
 <section id="playground">
   <h2>在线体验</h2>

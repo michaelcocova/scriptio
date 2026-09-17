@@ -1,59 +1,35 @@
-import type { Step, StepValue } from './types'
-import process from 'node:process'
-import { autocomplete, autocompleteMultiselect, cancel, confirm as clackConfirm, isCancel, multiselect, select, text } from '@clack/prompts'
+import type { Option } from '@clack/prompts'
+import type { ScriptEntry, ScriptGroup } from './presentation'
+import type { ResolvedScriptMap } from './types'
+import { autocomplete, cancel, isCancel } from '@clack/prompts'
+import { groupScripts, scriptLabel } from './presentation'
 
-export async function askStep(step: Step, initial?: StepValue): Promise<StepValue> {
-  if (step.type === 'confirm') {
-    const result = await clackConfirm({
-      initialValue: typeof initial === 'boolean' ? initial : undefined,
-      message: step.message,
+type Selection = ScriptEntry | ScriptGroup | { type: 'back' }
+
+export async function selectScript(scripts: ResolvedScriptMap): Promise<string | undefined> {
+  const entries = groupScripts(scripts)
+  let current: ScriptGroup | undefined
+  while (true) {
+    const options = (current ? current.children : entries).map<Option<Selection>>((entry) => {
+      if (entry.type === 'group')
+        return { hint: `${entry.children.length} 个脚本`, label: entry.name, value: entry }
+      return { hint: entry.command, label: scriptLabel(entry), value: entry }
     })
-    return resolve(result, step.key) as boolean
-  }
+    if (current)
+      options.push({ hint: '', label: '← 返回上一级', value: { type: 'back' } })
 
-  if (step.type === 'text') {
-    const result = await text({
-      initialValue: typeof initial === 'string' ? initial : undefined,
-      message: step.message,
+    const result = await autocomplete({
+      maxItems: 8,
+      message: current ? `选择 ${current.name} 组内的 Script` : '选择要执行的 Script',
+      options,
+      placeholder: '输入脚本名或标签搜索',
     })
-    return resolve(result, step.key) as string
+    if (isCancel(result)) {
+      cancel('已取消执行')
+      return undefined
+    }
+    if (result.type === 'script')
+      return result.name
+    current = result.type === 'group' ? result : undefined
   }
-
-  if (step.type === 'multiselect' || step.type === 'autocompleteMultiselect') {
-    const result = step.type === 'multiselect'
-      ? await multiselect({
-          initialValues: Array.isArray(initial) ? initial : undefined,
-          message: step.message,
-          options: step.options,
-        })
-      : await autocompleteMultiselect({
-          initialValues: Array.isArray(initial) ? initial : undefined,
-          message: step.message,
-          options: step.options,
-          placeholder: '输入以搜索...',
-        })
-    return resolve(result, step.key) as string[]
-  }
-
-  const result = step.type === 'autocomplete'
-    ? await autocomplete({
-        initialValue: typeof initial === 'string' ? initial : undefined,
-        message: step.message,
-        options: step.options,
-        placeholder: '输入以搜索...',
-      })
-    : await select({
-        initialValue: typeof initial === 'string' ? initial : undefined,
-        message: step.message,
-        options: step.options,
-      })
-  return resolve(result, step.key) as string
-}
-
-function resolve(result: string | boolean | string[] | symbol, key: string): string | boolean | string[] {
-  if (isCancel(result)) {
-    cancel(`已取消 ${key}`)
-    process.exit(0)
-  }
-  return result
 }

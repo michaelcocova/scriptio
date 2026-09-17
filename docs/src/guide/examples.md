@@ -1,151 +1,200 @@
 # 完整示例
 
-下面的配置覆盖选择、可搜索、多选、文本输入和条件步骤，适用于 turbo 或 pnpm workspace 的 Monorepo。
+这个示例演示一个 `@onecells` monorepo：
+
+- 应用：admin、studio、sso、site、mobile
+- 开发环境：test、integration、qa、uat、staging、preproduction、demo
+- 构建环境：development、test、integration、qa、uat、staging、preproduction、demo
+
+开发脚本使用 `start` 前缀，构建脚本使用 `build` 前缀。每个环境都有“全部应用”和“单应用”两种脚本。
 
 ```ts
-import { defineConfig } from "scriptio";
+import { defineConfig, defineEnv, defineScripts } from "scriptio";
 
-const APP_PACKAGES = {
-  admin: "@pg/admin",
-  client: "@pg/client",
-  docs: "@pg/docs",
-  server: "@pg/server",
-  www: "@pg/www",
-} as const;
+// 所有参与矩阵生成的应用。使用 as const 后，matrix 的 app 参数会推导为字面量联合类型。
+const apps = ["admin", "studio", "sso", "site", "mobile"] as const;
 
-type AppName = keyof typeof APP_PACKAGES;
+// start 环境不包含 development，因为裸 start 就代表本地 development。
+const startEnvs = [
+  "test",
+  "integration",
+  "qa",
+  "uat",
+  "staging",
+  "preproduction",
+  "demo",
+] as const;
 
-function taskCommand(task: string, apps: AppName[]) {
-  const filters = apps.map((app) => `--filter=${APP_PACKAGES[app]}`).join(" ");
-  return `pnpm turbo run ${task} ${filters}`;
-}
+// build 显式包含 development，方便 CI 或发布流程直接执行 build:development。
+const buildEnvs = [
+  "development",
+  "test",
+  "integration",
+  "qa",
+  "uat",
+  "staging",
+  "preproduction",
+  "demo",
+] as const;
 
-function appsOf(values: Record<string, unknown>): AppName[] {
-  return (Array.isArray(values.apps) ? values.apps : []) as AppName[];
+function appFilter(app: string): string {
+  return `@onecells/${app}`;
 }
 
 export default defineConfig({
-  commands: {
-    build: async ({ run, values }) => {
-      await run(taskCommand("build", appsOf(values)));
+  env: defineEnv(({ env }) => [
+    // 给所有 build 脚本注入内存参数，但排除 build:packages。
+    // 环境变量通过子进程 env 注入，命令里不需要写 cross-env。
+    env("build:*,!build:packages", {
+      NODE_OPTIONS: "--max-old-space-size=8192",
+    }),
+  ]),
+
+  scripts: defineScripts(({ matrix }) => [
+    {
+      // 默认 start：启动所有应用的本地 development watch。
+      start: {
+        command: 'turbo watch dev --filter="./apps/*"',
+        group: "start",
+      },
     },
 
-    clean: async ({ run, values }) => {
-      if (values.confirmClean) {
-        await run("pnpm clean");
-      }
-    },
+    // start:admin / start:sso / ...
+    // 只启动单个应用的本地 development watch。
+    matrix({
+      command: ({ app }) => `turbo watch dev --filter=${appFilter(app)}`,
+      group: "start",
+      name: "start:{app}",
+      values: {
+        app: apps,
+      },
+    }),
 
-    deploy: async ({ run, values }) => {
-      if (values.deploy) {
-        await run(
-          `node scripts/deploy.mjs --apps ${appsOf(values).join(",")} --env ${String(values.env)} --tag ${String(values.tag)}`,
-        );
-      }
-    },
+    // start:test / start:qa / ...
+    // 启动某个环境下的全部应用。
+    matrix({
+      command: ({ env }) => `turbo watch dev:${env} --filter="./apps/*"`,
+      group: "start",
+      name: "start:{env}",
+      values: {
+        env: startEnvs,
+      },
+    }),
 
-    dev: async ({ run, values }) => {
-      await run(taskCommand("dev", appsOf(values)));
-    },
+    // start:test:admin / start:qa:sso / ...
+    // 启动某个环境下的单个应用。
+    matrix({
+      command: ({ app, env }) =>
+        `turbo watch dev:${env} --filter=${appFilter(app)}`,
+      group: "start",
+      name: "start:{env}:{app}",
+      values: {
+        app: apps,
+        env: startEnvs,
+      },
+    }),
 
-    lint: async ({ run, values }) => {
-      await run(taskCommand("lint", appsOf(values)));
-    },
-  },
+    // build:test / build:release / ...
+    // 构建某个环境下的全部应用。
+    matrix({
+      command: ({ env }) => `turbo run build:${env} --filter="./apps/*"`,
+      group: "build",
+      name: "build:{env}",
+      values: {
+        env: buildEnvs,
+      },
+    }),
 
-  defaultValues: {
-    apps: ["www", "client"],
-    confirmClean: false,
-    env: "local",
-    mode: "dev",
-  },
+    // build:test:admin / build:release:sso / ...
+    // 构建某个环境下的单个应用。
+    matrix({
+      command: ({ app, env }) =>
+        `turbo run build:${env} --filter=${appFilter(app)}`,
+      group: "build",
+      name: "build:{env}:{app}",
+      values: {
+        app: apps,
+        env: buildEnvs,
+      },
+    }),
 
-  steps: [
     {
-      key: "mode",
-      message: "选择任务",
-      options: [
-        { label: "本地开发", value: "dev" },
-        { label: "构建", value: "build" },
-        { label: "代码检查", value: "lint" },
-        { label: "部署", value: "deploy" },
-        { label: "清理构建产物", value: "clean" },
-      ],
-      param: ["--mode", "-M"],
-      type: "select",
+      "add:widget": {
+        command: "pnpm dlx shadcn-vue@2.0.1 add",
+        label: "添加组件",
+      },
+      "build:packages": {
+        command: 'turbo run build:pk --filter="./packages-next/*"',
+        group: "build",
+        label: "构建组件包",
+      },
+      clean: {
+        command:
+          "rimraf 'apps/*/{node_modules,dist}' && rimraf {node_modules,dist}",
+        group: "clean",
+      },
+      "clean:cache": {
+        command: "rimraf apps/*/node_modules/.vite",
+        group: "clean",
+      },
+      "clean:out": {
+        command: "rimraf 'apps/*/{dist,.output}' && rimraf ./dist",
+        group: "clean",
+      },
+      commit: "git add . && git-cz",
+      "start:docs": "turbo watch dev --filter=@onecells/docs-next",
+      "start:packages": 'turbo watch build:pk --filter="./packages-next/*"',
+      format: "prettier --write src/",
+      lint: "eslint . --fix --cache",
+      prepare: "husky",
     },
-    {
-      key: "apps",
-      message: "选择应用（可搜索，空格多选）",
-      options: [
-        { label: "官网 (www)", value: "www" },
-        { label: "用户前端 (client)", value: "client" },
-        { label: "API 服务 (server)", value: "server" },
-        { label: "管理后台 (admin)", value: "admin" },
-        { label: "文档站 (docs)", value: "docs" },
-      ],
-      param: ["--apps", "-A"],
-      type: "autocompleteMultiselect",
-    },
-    {
-      key: "env",
-      message: "选择环境（可搜索）",
-      options: [
-        { label: "本地环境", value: "local" },
-        { label: "测试环境", value: "staging" },
-        { label: "生产环境", value: "production" },
-      ],
-      param: ["--env", "-E"],
-      type: "autocomplete",
-    },
-    {
-      condition: (values) => values.mode === "deploy",
-      key: "tag",
-      message: "发布版本号",
-      param: ["--tag", "-T"],
-      type: "text",
-    },
-    {
-      condition: (values) => values.mode === "deploy",
-      key: "deploy",
-      message: "确认部署？",
-      param: ["--deploy", "-D"],
-      type: "confirm",
-    },
-    {
-      condition: (values) => values.mode === "clean",
-      key: "confirmClean",
-      message: "确认清理构建产物？",
-      param: ["--clean", "-L"],
-      type: "confirm",
-    },
-  ],
+  ]),
 });
 ```
 
-## 交互运行
+## 查看脚本
 
 ```bash
-pnpm scriptio
+scriptio view
 ```
 
-选择 `deploy` 时，才会出现版本号和确认部署步骤；选择 `clean` 时，才会出现清理确认。
+输出会按显式 `group` 分组。下面截取部分结果：
 
-## 直接传参
+```text
+scripts
+├── start
+│   ├── start  turbo watch dev --filter="./apps/*"
+│   ├── start:admin  turbo watch dev --filter=@onecells/admin
+│   ├── start:sso  turbo watch dev --filter=@onecells/sso
+│   ├── start:test  turbo watch dev:test --filter="./apps/*"
+│   └── start:test:sso  turbo watch dev:test --filter=@onecells/sso
+├── build
+│   ├── build:development  turbo run build:development --filter="./apps/*"
+│   ├── build:development:admin  turbo run build:development --filter=@onecells/admin
+│   ├── build:test  turbo run build:test --filter="./apps/*"
+│   ├── build:test:sso  turbo run build:test --filter=@onecells/sso
+│   └── 构建组件包 (build:packages)  turbo run build:pk --filter="./packages-next/*"
+├── 添加组件 (add:widget)  pnpm dlx shadcn-vue@2.0.1 add
+├── clean
+│   ├── clean  rimraf 'apps/*/{node_modules,dist}' && rimraf {node_modules,dist}
+│   ├── clean:cache  rimraf apps/*/node_modules/.vite
+│   └── clean:out  rimraf 'apps/*/{dist,.output}' && rimraf ./dist
+├── commit  git add . && git-cz
+├── start:docs  turbo watch dev --filter=@onecells/docs-next
+├── start:packages  turbo watch build:pk --filter="./packages-next/*"
+├── format  prettier --write src/
+├── lint  eslint . --fix --cache
+└── prepare  husky
+```
+
+## 执行示例
 
 ```bash
-pnpm scriptio --mode build --apps www --apps client --env production
+scriptio start
+scriptio start:test:sso
+scriptio build:test
+scriptio build:test:sso
+scriptio build:packages
 ```
 
-```bash
-pnpm scriptio --mode deploy --apps www --env production --tag v1.2.0 --deploy
-```
-
-```bash
-pnpm scriptio --mode clean --clean
-```
-
-## 相关文章
-
-- [使用](/guide/usage)：普通项目与流水线用法
-- [步骤类型](/guide/steps)：了解每种输入类型
+这些命令依赖示例工作区中的业务工具和包名。本仓库只包含 Scriptio，本示例里的业务命令不会在文档构建时执行。

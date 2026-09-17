@@ -1,200 +1,142 @@
-# 步骤类型
+# Matrix 脚本生成
 
-每个 step 用于收集一个参数。步骤类型由 `type` 字段决定。
+`matrix()` 用来根据 `values` 生成重复脚本。它适合处理“环境 × 应用”“环境 × 包”这类组合。
 
-第一个 step 的 value 会作为 `commands` 的 key，参数收集完成后 Scriptio 根据它自动路由到对应 command。
-
-## 通用字段
-
-| 字段        | 说明                                          |
-| ----------- | --------------------------------------------- |
-| `key`       | 结果保存到 `values[key]`                      |
-| `message`   | 交互提示文案                                  |
-| `param`     | CLI 参数，例如 `--mode` 或 `['--mode', '-M']` |
-| `condition` | 可选函数，返回 `false` 时跳过该步骤           |
-
-## select
-
-从固定选项中选择一个值：
+## 基本用法
 
 ```ts
-const step = {
-  key: "env",
-  message: "选择环境",
-  options: [
-    { label: "本地环境", value: "local" },
-    { label: "测试环境", value: "staging" },
-    { label: "生产环境", value: "production" },
-  ],
-  param: ["--env", "-E"],
-  type: "select",
-};
+const apps = ["admin", "sso"] as const;
+const envs = ["test", "release"] as const;
+
+matrix({
+  command: ({ app, env }) => `turbo run build:${env} --filter=@onecells/${app}`,
+  group: "build",
+  name: "build:{env}:{app}",
+  values: {
+    app: apps,
+    env: envs,
+  },
+});
 ```
 
-结果：
+生成：
+
+```text
+build:test:admin
+build:test:sso
+build:release:admin
+build:release:sso
+```
+
+生成顺序遵循 `values` 中 key 的声明顺序。上面先遍历 `app`，再遍历 `env`；如果希望先按环境排列，把 `env` 写在前面。
+
+## name 和 label
+
+`name` 和 `label` 都可以是字符串或函数。函数参数从 `values` 推导字面量类型。
 
 ```ts
-const env = values.env; // "staging"
+matrix({
+  command: ({ app, env }) => `turbo run build:${env} --filter=@onecells/${app}`,
+  label: (values) => `${values.env} / ${values.app}`,
+  name: (values) => `build:${values.env}:${values.app}`,
+  values: {
+    env: ["test", "release"] as const,
+    app: ["admin", "sso"] as const,
+  },
+});
 ```
 
-## confirm
-
-获取布尔值：
+在这个例子里：
 
 ```ts
-const step = {
-  key: "deploy",
-  message: "确认部署？",
-  param: ["--deploy", "-D"],
-  type: "confirm",
-};
+values.env; // 'test' | 'release'
+values.app; // 'admin' | 'sso'
 ```
 
-结果：
+`label` 只影响展示。脚本执行和 env 匹配仍使用 `name` 生成的脚本名。
+
+## command 和 template
+
+复杂命令使用 `command` 函数：
 
 ```ts
-const deploy = values.deploy; // true | false
+matrix({
+  command: ({ app, env }) => {
+    const filter = app === "all" ? "./apps/*" : `@onecells/${app}`;
+    return `turbo run build:${env} --filter=${filter}`;
+  },
+  name: "build:{env}:{app}",
+  values: {
+    app: ["admin", "sso"] as const,
+    env: ["test", "release"] as const,
+  },
+});
 ```
 
-命令行中不带值传入即表示 `true`：
-
-```bash
-pnpm scriptio --deploy
-```
-
-## multiselect
-
-从选项中选择多个值，结果为数组：
+简单替换可以用 `template`：
 
 ```ts
-const step = {
-  key: "apps",
-  message: "选择应用",
-  options: [
-    { label: "官网", value: "www" },
-    { label: "客户端", value: "client" },
-    { label: "API", value: "server" },
-  ],
-  param: ["--apps", "-A"],
-  type: "multiselect",
-};
+matrix({
+  name: "build:{env}:{app}",
+  template: "turbo run build:{env} --filter=@onecells/{app}",
+  values: {
+    app: ["admin", "sso"] as const,
+    env: ["test", "release"] as const,
+  },
+});
 ```
 
-结果：
+`command` 和 `template` 必须二选一。
+
+## 占位符规则
+
+字符串占位符统一使用 `{variable}`：
+
+```text
+build:{env}:{app}
+```
+
+不支持 JavaScript 模板字符串形式：
+
+```text
+${env}
+```
+
+`name`、`label`、`template` 中引用的变量必须存在于 `values`。
+
+## 全部应用和单应用
+
+如果需要同时生成全部应用和单应用脚本，建议拆成两个 `matrix()`，这样脚本名和命令都更清楚。
 
 ```ts
-const apps = values.apps; // ["www", "client"]
+matrix({
+  command: ({ env }) => `turbo run build:${env} --filter="./apps/*"`,
+  group: "build",
+  name: "build:{env}",
+  values: {
+    env: ["test", "release"] as const,
+  },
+});
+
+matrix({
+  command: ({ app, env }) => `turbo run build:${env} --filter=@onecells/${app}`,
+  group: "build",
+  name: "build:{env}:{app}",
+  values: {
+    app: ["admin", "sso"] as const,
+    env: ["test", "release"] as const,
+  },
+});
 ```
 
-命令行中重复传入参数：
+## 校验行为
 
-```bash
-pnpm scriptio --apps www --apps client
-```
+`matrix()` 会在配置加载时校验：
 
-## autocomplete
-
-可搜索单选，适合选项较多的场景：
-
-```ts
-const step = {
-  key: "framework",
-  message: "选择框架",
-  options: [
-    { label: "Next.js", value: "next" },
-    { label: "Nuxt", value: "nuxt" },
-    { label: "SvelteKit", value: "sveltekit" },
-  ],
-  param: ["--framework", "-F"],
-  type: "autocomplete",
-};
-```
-
-交互时可以输入关键字过滤选项，结果为单个字符串。
-
-## autocompleteMultiselect
-
-可搜索多选，配置与 `multiselect` 相同：
-
-```ts
-const step = {
-  key: "apps",
-  message: "选择应用",
-  options: [
-    // ...
-  ],
-  param: ["--apps", "-A"],
-  type: "autocompleteMultiselect",
-};
-```
-
-交互时支持输入过滤和空格多选，返回值和命令行传参方式与 `multiselect` 一致。
-
-## text
-
-自由文本输入，不需要 `options`：
-
-```ts
-const step = {
-  key: "tag",
-  message: "发布版本号",
-  param: ["--tag", "-T"],
-  type: "text",
-};
-```
-
-结果：
-
-```ts
-const tag = values.tag; // "v1.0.0"
-```
-
-## 条件步骤
-
-`condition` 接收当前已解析的 `values`，返回 `false` 时跳过该步骤，不询问、也不出现在 `values` 中：
-
-```ts
-const step = {
-  condition: (values) => values.mode === "clean",
-  key: "confirmClean",
-  message: "确认清理构建产物？",
-  param: ["--clean", "-L"],
-  type: "confirm",
-};
-```
-
-条件按 `steps` 顺序判断，只能读取排在它前面的步骤的值：
-
-```bash
-pnpm scriptio --mode dev
-```
-
-不会询问 `confirmClean`，最终 `values` 中也没有 `confirmClean`。
-
-## param 别名
-
-`param` 支持字符串或数组。数组第一项是最终生成 `args` 时使用的主参数，所有项都会参与命令行解析：
-
-```ts
-const step = {
-  key: "mode",
-  message: "选择任务",
-  options: [
-    // ...
-  ],
-  param: ["--mode", "-M"],
-  type: "select",
-};
-```
-
-下面两种写法等价：
-
-```bash
-pnpm scriptio --mode build
-pnpm scriptio -M build
-```
-
-## 相关文章
-
-- [配置](/guide/configuration)：了解 commands、defaultValues 与生命周期
-- [完整示例](/guide/examples)：查看组合使用方式
+- `name` 必须是非空字符串或返回非空字符串的函数。
+- `label` 如果存在，也必须是非空字符串或返回非空字符串的函数。
+- `values` 必须是非空对象，每个 value 必须是非空字符串数组。
+- `command` 和 `template` 必须二选一。
+- 字符串占位符必须合法，且必须存在于 `values`。
+- 单个 `matrix()` 生成重复脚本名会报错。
+- `command`、`name`、`label` 函数必须返回字符串。

@@ -8,7 +8,7 @@ const base = process.env.DOCS_BASE ?? '/'
 export default defineConfig({
   base,
   cleanUrls: true,
-  description: 'Scriptio 项目级通用任务 CLI',
+  description: 'Scriptio 轻量 TypeScript Script Runner',
   head: [
     ['link', {
       href: `${base}favicon.svg`,
@@ -108,7 +108,7 @@ export default defineConfig({
           },
           {
             link: '/guide/steps',
-            text: '步骤类型',
+            text: 'Matrix 脚本生成',
           },
           {
             link: '/guide/cli',

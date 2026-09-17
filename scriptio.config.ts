@@ -1,124 +1,127 @@
-import type { StepValue } from './src/types'
-import process from 'node:process'
-import { defineConfig } from './src/index'
-// 面向 monorepo 的示例配置：
-// apps 下是 web / docs / admin 三个应用，packages 下是共享包。
+import {
+  defineConfig,
+  defineScripts,
+} from './src/index'
+
+const apps = [
+  'admin',
+  'sso',
+  'console',
+  'website',
+] as const
+
+const devEnvs = [
+  'test',
+  'pre',
+  'six',
+] as const
+
+const buildEnvs = [
+  'dev',
+  'test',
+  'pre',
+  'six',
+  'release',
+] as const
+
 export default defineConfig({
-  commands: {
-    build: async ({ run, values }) => {
-      const nodeEnv = values.env === 'production' ? 'production' : 'development'
-      await run(`NODE_ENV=${nodeEnv} pnpm ${appFilter(values.app)} build:${values.env}`)
-    },
-
-    clean: async ({ run }) => {
-      await run([
-        'pnpm --filter "./apps/*" clean',
-        'pnpm --filter "./packages/*" clean',
-      ])
-    },
-
-    deploy: async ({ run, values }) => {
-      // 部署是高危操作，必须通过 confirm step 或 --deploy 显式确认。
-      if (!values.deploy) {
-        console.log('[scriptio] 未确认部署，已跳过')
-        return
-      }
-      const apps = Array.isArray(values.app) ? values.app.join(',') : String(values.app)
-      await run(`DEPLOY_TOKEN=${process.env.DEPLOY_TOKEN ?? ''} node scripts/deploy.mjs --app ${apps} --env ${values.env}`)
-    },
-
-    dev: async ({ run, values }) => {
-      await run(`pnpm ${appFilter(values.app)} --parallel dev`)
-    },
-
-    test: async ({ run, values }) => {
-      await run(`pnpm ${appFilter(values.app)} test --run`)
-    },
-
-    typecheck: async ({ run, values }) => {
-      // 应用和共享包可以并行检查，互不依赖。
-      await run([
-        `pnpm ${appFilter(values.app)} typecheck`,
-        'pnpm --filter "./packages/*" typecheck',
-      ])
+  env: {
+    'build:*,!build:packages': {
+      NODE_OPTIONS:
+        '--max-old-space-size=8192',
     },
   },
 
-  defaultValues: {
-    app: ['all'],
-    deploy: false,
-    env: 'local',
-    mode: 'dev',
-  },
+  scripts: defineScripts(({ matrix }) => {
+    return [
+      {
+        dev: {
+          command: 'turbo watch dev --filter="./apps/*"',
+          group: 'dev',
+        },
+      },
 
-  hooks: {
-    error: async (error, { values }) => {
-      console.error(`[scriptio] ${values.mode} 失败`, error)
-    },
+      matrix({
+        command: ({ app }) => `turbo watch dev --filter=@ffy/${app}`,
+        group: 'dev',
+        name: 'dev:{app}',
+        values: {
+          app: apps,
+        },
+      }),
 
-    finally: async ({ values }) => {
-      console.log(`[scriptio] ${values.mode} 结束`)
-    },
+      matrix({
+        command: ({ env }) => `turbo watch dev:${env} --filter="./apps/*"`,
+        group: 'dev',
+        name: 'dev:{env}',
+        values: {
+          env: devEnvs,
+        },
+      }),
 
-    success: async ({ values }) => {
-      console.log(`[scriptio] ${values.mode} 完成`)
-    },
-  },
+      matrix({
+        command: ({ app, env }) => `turbo watch dev:${env} --filter=@ffy/${app}`,
+        group: 'dev',
+        name: 'dev:{env}:{app}',
+        // env 放在 app 前面，用声明顺序控制 view 的生成顺序。
+        values: {
+          env: devEnvs,
+          // eslint-disable-next-line perfectionist/sort-objects
+          app: apps,
+        },
+      }),
 
-  steps: [
-    {
-      key: 'mode',
-      message: '选择任务',
-      options: [
-        { label: '本地开发', value: 'dev' },
-        { label: '类型检查', value: 'typecheck' },
-        { label: '运行测试', value: 'test' },
-        { label: '构建', value: 'build' },
-        { label: '部署', value: 'deploy' },
-        { label: '清理', value: 'clean' },
-      ],
-      param: ['--mode', '-M'],
-      type: 'select',
-    },
-    {
-      condition: values => values.mode !== 'clean',
-      key: 'app',
-      message: '选择应用',
-      options: [
-        { label: '全部应用', value: 'all' },
-        { label: 'Web', value: 'web' },
-        { label: 'Docs', value: 'docs' },
-        { label: 'Admin', value: 'admin' },
-      ],
-      param: ['--app', '-A'],
-      type: 'multiselect',
-    },
-    {
-      condition: values => values.mode !== 'clean',
-      key: 'env',
-      message: '选择环境',
-      options: [
-        { label: '本地环境', value: 'local' },
-        { label: '测试环境', value: 'staging' },
-        { label: '生产环境', value: 'production' },
-      ],
-      param: ['--env', '-E'],
-      type: 'select',
-    },
-    {
-      condition: values => values.mode === 'deploy',
-      key: 'deploy',
-      message: '确认部署？',
-      param: ['--deploy', '-D'],
-      type: 'confirm',
-    },
-  ],
+      matrix({
+        command: ({ env }) => `turbo run build:${env} --filter="./apps/*"`,
+        group: 'build',
+        name: 'build:{env}',
+        values: {
+          env: buildEnvs,
+        },
+      }),
+
+      matrix({
+        command: ({ app, env }) => `turbo run build:${env} --filter=@ffy/${app}`,
+        group: 'build',
+        name: 'build:{env}:{app}',
+
+        // env 放在 app 前面，用声明顺序控制 view 的生成顺序。
+        values: {
+          env: buildEnvs,
+          // eslint-disable-next-line perfectionist/sort-objects
+          app: apps,
+        },
+      }),
+
+      {
+        'add:widget': {
+          command: 'pnpm dlx shadcn-vue@2.0.1 add',
+          label: '添加组件',
+        },
+        'build:packages': {
+          command: 'turbo run build:pk --filter="./packages-next/*"',
+          group: 'build',
+          label: '构建组件包',
+        },
+        'clean': {
+          command: 'rimraf \'apps/*/{node_modules,dist}\' && rimraf {node_modules,dist}',
+          group: 'clean',
+        },
+        'clean:cache': {
+          command: 'rimraf apps/*/node_modules/.vite',
+          group: 'clean',
+        },
+        'clean:out': {
+          command: 'rimraf \'apps/*/{dist,.output}\' && rimraf ./dist',
+          group: 'clean',
+        },
+        'commit': 'git add . && git-cz',
+        'dev:docs': 'turbo watch dev --filter=@vmrack/docs-next',
+        'dev:packages': 'turbo watch build:pk --filter="./packages-next/*"',
+        'format': 'prettier --write src/',
+        'lint': 'eslint . --fix --cache',
+        'prepare': 'husky',
+      },
+    ]
+  }),
 })
-
-function appFilter(apps: StepValue): string {
-  const selected = Array.isArray(apps) ? apps : [String(apps)]
-  if (selected.includes('all')) {
-    return '--filter "./apps/*"'
-  }
-  return selected.map(app => `--filter ${app}`).join(' ')
-}

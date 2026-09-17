@@ -1,11 +1,19 @@
 # 快速开始
 
-Scriptio 是一个项目级通用任务 CLI。它不关心项目业务，只负责加载项目根目录的 `scriptio.config.ts`，根据 `steps` 收集参数，再按第一个 step 的 value 自动路由到 `commands` 执行。
-
 ## 安装
 
 ```bash
 pnpm add -D scriptio
+```
+
+在 `package.json` 中添加入口：
+
+```json
+{
+  "scripts": {
+    "start": "scriptio"
+  }
+}
 ```
 
 ## 创建配置
@@ -13,55 +21,95 @@ pnpm add -D scriptio
 在项目根目录创建 `scriptio.config.ts`：
 
 ```ts
-import { defineConfig } from "scriptio";
+import { defineConfig, defineEnv, defineScripts } from "scriptio";
+
+const envs = ["dev", "test", "release"] as const;
 
 export default defineConfig({
-  commands: {
-    build: async ({ run }) => {
-      await run("pnpm build");
-    },
+  env: defineEnv(({ env, each }) => [
+    env("start", {
+      NODE_ENV: "development",
+    }),
 
-    clean: async ({ run }) => {
-      await run("pnpm clean");
-    },
+    each(envs, "build:{env}", (env) => ({
+      NODE_ENV: env === "dev" ? "development" : env,
+    })),
 
-    dev: async ({ run }) => {
-      await run("pnpm dev");
-    },
-  },
+    env("build:*", {
+      NODE_OPTIONS: "--max-old-space-size=8192",
+    }),
+  ]),
 
-  steps: [
+  scripts: defineScripts(({ matrix }) => [
     {
-      key: "mode",
-      message: "选择任务",
-      options: [
-        { label: "本地开发", value: "dev" },
-        { label: "构建", value: "build" },
-        { label: "清理", value: "clean" },
-      ],
-      param: ["--mode", "-M"],
-      type: "select",
+      start: {
+        command: "vite --mode development",
+        group: "start",
+      },
     },
-  ],
+
+    matrix({
+      command: ({ env }) => `vite build --mode ${env}`,
+      group: "build",
+      name: "build:{env}",
+      values: {
+        env: envs,
+      },
+    }),
+
+    {
+      lint: "eslint .",
+      preview: "vite preview",
+    },
+  ]),
 });
 ```
 
 ## 运行
 
-直接运行进入交互模式：
-
 ```bash
-pnpm scriptio
+pnpm start
 ```
 
-也可以直接传参数，跳过交互：
+无参数时会在 TTY 中打开选择器。
+
+也可以直接执行某个脚本：
 
 ```bash
-pnpm scriptio --mode build
+pnpm start build:test
+pnpm start lint
 ```
 
-## 相关文章
+查看生成后的脚本树：
 
-- [配置结构](/guide/configuration)：了解 `steps`、`defaultValues`、生命周期
-- [步骤类型](/guide/steps)：查看六种输入类型与条件步骤
-- [完整示例](/guide/examples)：查看 Monorepo 场景配置
+```bash
+pnpm start view
+```
+
+输出类似：
+
+```text
+scripts
+├── start
+│   └── start  vite --mode development
+├── build
+│   ├── build:dev  vite build --mode dev
+│   ├── build:test  vite build --mode test
+│   └── build:release  vite build --mode release
+├── lint  eslint .
+└── preview  vite preview
+```
+
+如果你不想通过 `package.json` 入口，也可以直接执行：
+
+```bash
+pnpm scriptio build:test
+pnpm scriptio view
+```
+
+## 下一步
+
+- 想了解 CLI 参数和退出码，阅读[CLI 与命令执行](./cli)。
+- 想了解 `group`、`label`、`defineEnv`，阅读[配置与环境变量](./configuration)。
+- 想生成大量组合脚本，阅读[Matrix 脚本生成](./steps)。
+- 想看 monorepo 写法，阅读[完整示例](./examples)。

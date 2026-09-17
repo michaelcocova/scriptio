@@ -1,210 +1,269 @@
-# 配置
+# 配置与环境变量
 
-配置由 `defineConfig` 定义，包含 `commands`、`defaultValues`、`hooks` 和 `steps`。
+Scriptio 默认读取当前工作目录下的 `scriptio.config.ts`。配置文件需要默认导出 `defineConfig()` 包裹的对象。
 
 ```ts
-import { defineConfig } from "scriptio";
+import { defineConfig, defineEnv, defineScripts } from "scriptio";
 
 export default defineConfig({
-  commands: {
-    build: async ({ run, values }) => {
-      await run(`pnpm build:${values.env}`);
-    },
+  env: defineEnv(({ env }) => [
+    env("build:*", {
+      NODE_OPTIONS: "--max-old-space-size=8192",
+    }),
+  ]),
 
-    dev: async ({ run }) => {
-      await run("pnpm dev");
-    },
+  scripts: {
+    build: "vite build",
+    lint: "eslint .",
   },
-
-  defaultValues: {
-    env: "local",
-    mode: "dev",
-  },
-
-  hooks: {
-    error: async (error, { values }) => {
-      // 执行失败
-      console.error(error);
-    },
-
-    finally: async ({ values }) => {
-      // 始终执行
-    },
-
-    success: async ({ values }) => {
-      // 执行成功
-    },
-  },
-
-  steps: [
-    // ...
-  ],
 });
 ```
 
-## steps
+## scripts
 
-`steps` 定义参数收集流程，按数组顺序依次执行。
-
-| 字段        | 说明                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------- |
-| `key`       | 必填，结果保存到 `values[key]`                                                        |
-| `type`      | `select`、`confirm`、`multiselect`、`autocomplete`、`autocompleteMultiselect`、`text` |
-| `message`   | 交互提示文案                                                                          |
-| `param`     | 对应的 CLI 参数，例如 `--env` 或 `['--env', '-E']`                                    |
-| `options`   | 选项类步骤的可选项                                                                    |
-| `condition` | 可选函数，返回 `false` 时跳过该步骤                                                   |
-
-步骤类型详见[步骤类型](/guide/steps)。
-
-## 第一个 step 与 commands 关联
-
-`commands` 的 key 使用第一个 step 的 value 匹配：
+`scripts` 是必填项。它可以是一个 `ScriptMap`，也可以是多个 `ScriptMap` 组成的数组。
 
 ```ts
-steps: [
-  {
-    key: "mode",
-    options: [
-      { label: "开发", value: "dev" },
-      { label: "构建", value: "build" },
-    ],
-    type: "select",
+export default defineConfig({
+  scripts: {
+    build: "vite build",
+    lint: "eslint .",
   },
-];
-```
-
-对应：
-
-```ts
-const commands = {
-  build: async ({ run }) => {},
-  dev: async ({ run }) => {},
-};
-```
-
-执行 `--mode build` 时，Scriptio 自动调用 `commands.build`。第一个 step 决定“做什么”，后面的 step 决定“怎么做”。
-
-## defaultValues
-
-为步骤提供默认值：
-
-```ts
-const config = defineConfig({
-  defaultValues: {
-    app: "all",
-    env: "local",
-    mode: "dev",
-  },
-  // ...
 });
 ```
 
-交互模式下默认值会作为默认选择；非交互模式下可作为缺省参数。
-
-默认值必须符合对应步骤的合法值。多选步骤的默认值是数组：
+脚本值可以是字符串，也可以是对象：
 
 ```ts
-const config = defineConfig({
-  defaultValues: {
-    apps: ["www", "client"],
+{
+  'build:packages': {
+    command: 'turbo run build:pk --filter="./packages/*"',
+    group: 'build',
+    label: '构建组件包',
   },
-  // ...
-});
-```
-
-## commands
-
-`commands` 是任务执行入口：
-
-```ts
-const commands = {
-  build: async ({ run, values }) => {
-    await run(`pnpm build:${values.env}`);
-  },
-};
-```
-
-每个 command 接收：
-
-```ts
-interface CommandContext {
-  run: Run;
-  values: Record<string, StepValue>;
 }
 ```
 
-- `run(string)` 串行执行一个命令
-- `run(string[])` 并行执行一组命令
-- `values` 是所有步骤的最终结果
+对象字段：
 
-如果 `commands` 中不存在与第一个 step 的 value 对应的 key，CLI 会报错退出。
+| 字段      | 必填 | 说明                                        |
+| --------- | ---- | ------------------------------------------- |
+| `command` | 是   | 要执行的命令字符串。                        |
+| `group`   | 否   | 交互选择和 `scriptio view` 使用的显式分组。 |
+| `label`   | 否   | 展示名称；执行和 env 匹配仍然使用脚本原名。 |
 
-## 生命周期
+## defineScripts
 
-配置支持三个生命周期钩子：
+`defineScripts()` 用来组合普通 map 和 matrix 生成结果。
 
 ```ts
-export default defineConfig({
-  hooks: {
-    error: async (error, { values }) => {
-      // 执行失败
-      console.error(error);
+scripts: defineScripts(({ matrix }) => [
+  matrix({
+    command: ({ env }) => `vite build --mode ${env}`,
+    group: "build",
+    name: "build:{env}",
+    values: {
+      env: ["test", "release"] as const,
     },
+  }),
 
-    finally: async ({ values }) => {
-      // 始终执行
-    },
-
-    success: async ({ values }) => {
-      // 执行成功
-    },
+  {
+    lint: "eslint .",
   },
-  // ...
+]);
+```
+
+数组按声明顺序合并。后面的同名脚本会覆盖前面的完整定义，包括 `command`、`group`、`label`。
+
+## 显式分组与标签
+
+Scriptio 只认显式 `group`，不会按冒号自动分组。
+
+```ts
+scripts: defineScripts(({ matrix }) => [
+  matrix({
+    command: ({ env }) => `turbo run build:${env}`,
+    group: "build",
+    name: "build:{env}",
+    values: {
+      env: ["test", "release"] as const,
+    },
+  }),
+
+  {
+    "build:packages": {
+      command: "turbo run build:pk",
+      group: "build",
+      label: "构建组件包",
+    },
+    lint: "eslint .",
+  },
+]);
+```
+
+`scriptio view` 会显示：
+
+```text
+scripts
+├── build
+│   ├── build:test  turbo run build:test
+│   ├── build:release  turbo run build:release
+│   └── 构建组件包 (build:packages)  turbo run build:pk
+└── lint  eslint .
+```
+
+分组位置由该组第一次出现的位置决定，组内保持最终脚本声明顺序。`label` 只影响展示，直接执行仍然使用脚本名：
+
+```bash
+scriptio build:packages
+```
+
+## env
+
+`env` 是可选项，用于按脚本名注入环境变量。
+
+推荐使用 `defineEnv()`：
+
+```ts
+const envs = ["dev", "test", "release"] as const;
+
+export default defineConfig({
+  env: defineEnv(({ env, each }) => [
+    env("start", {
+      NODE_ENV: "development",
+    }),
+
+    each(envs, "start:{env}", (env) => ({
+      NODE_ENV: env === "dev" ? "development" : env,
+    })),
+
+    env("build:*,!build:packages", {
+      NODE_OPTIONS: "--max-old-space-size=8192",
+    }),
+  ]),
+
+  scripts: {
+    start: "vite --mode development",
+    "start:test": "vite --mode test",
+    "build:test": "vite build --mode test",
+  },
 });
 ```
 
-执行流程：
+`env(pattern, variables)` 声明一条规则。`each(values, pattern, callback)` 会把 `pattern` 中的 `{env}` 替换为 `values` 中的每个值，callback 参数保留字面量类型。
 
-```text
-加载配置
-  ↓
-解析参数
-  ↓
-执行 commands[values.mode]
-  ↓
-success / error
-  ↓
-finally
+也可以直接写对象：
+
+```ts
+env: {
+  'build:*': {
+    NODE_OPTIONS: '--max-old-space-size=8192',
+  },
+}
 ```
 
-## 参数优先级
+## Env pattern
 
-交互模式下，参数按照以下优先级处理：
+Env rule 使用 `picomatch` 匹配脚本名。
 
-```text
-CLI 参数
-  ↓
-上次选择
-  ↓
-defaultValues
-  ↓
-初始值
+```ts
+env: defineEnv(({ env }) => [
+  env("build:*,!build:packages", {
+    NODE_OPTIONS: "--max-old-space-size=8192",
+  }),
+]);
 ```
 
-`confirm` 的初始值是 `false`，多选步骤的初始值是空数组，选择类步骤的初始值是第一个选项。
-
-## 状态记忆
-
-交互式运行时，Scriptio 会保存最近一次选择到：
+上面的规则会匹配：
 
 ```text
-node_modules/.scriptio/last_state.json
+build:test
+build:test:sso
+build:release
 ```
 
-下次执行时自动作为默认值。如果保存的值在当前配置中已不存在，会自动回退到合法默认值。
+不会匹配：
 
-## 相关文章
+```text
+build:packages
+start
+```
 
-- [步骤类型](/guide/steps)：查看六种输入类型与条件步骤
-- [使用](/guide/usage)：本地与流水线用法
+语法说明：
+
+- `*`、`**`、`?`、`[]`、`{}`、extglob 由 `picomatch` 处理。
+- 逗号用于组合多个 pattern。
+- `!` 前缀表示排除。
+- 只有 exclude 时，例如 `!build:packages`，表示匹配除 `build:packages` 外的脚本。
+- 逗号只在顶层分割；花括号、字符类、extglob 内部的逗号不会被拆开。
+
+## Env merge
+
+多个 env rule 可以同时命中。Scriptio 会从当前 `process.env` 开始，按声明顺序覆盖变量。
+
+```ts
+env: defineEnv(({ env }) => [
+  env("*", {
+    NODE_ENV: "development",
+  }),
+
+  env("build:*", {
+    NODE_OPTIONS: "--max-old-space-size=8192",
+  }),
+
+  env("build:release", {
+    NODE_ENV: "production",
+  }),
+]);
+```
+
+执行 `build:release` 时，最终环境包含：
+
+```ts
+{
+  NODE_ENV: 'production',
+  NODE_OPTIONS: '--max-old-space-size=8192',
+}
+```
+
+如果某个变量被设置为 `undefined`，它会从最终环境中删除：
+
+```ts
+env: defineEnv(({ env }) => [
+  env("*", {
+    DEBUG: "true",
+  }),
+
+  env("build:release", {
+    DEBUG: undefined,
+  }),
+]);
+```
+
+这不会产生 `DEBUG=undefined`。
+
+## TypeScript 类型
+
+常用类型都从 `scriptio` 入口导出：
+
+```ts
+import type {
+  EnvContext,
+  MatrixOptions,
+  ScriptEnvConfig,
+  ScriptioConfig,
+  ScriptMap,
+} from "scriptio";
+```
+
+例如显式标注 env：
+
+```ts
+import type { ScriptEnvConfig } from "scriptio";
+
+const envConfig: ScriptEnvConfig = {
+  "build:*": {
+    NODE_OPTIONS: "--max-old-space-size=8192",
+  },
+};
+```

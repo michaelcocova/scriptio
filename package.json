@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.0.1-beta.3",
   "packageManager": "pnpm@11.7.0",
-  "description": "A project-level task runner driven by scriptio.config.ts for interactive and CI workflows.",
+  "description": "A lightweight TypeScript script runner with matrix scripts and glob-based environment rules.",
   "author": {
     "name": "Michael Cocova",
     "email": "michael.cocova@gmail.com"
@@ -36,8 +36,11 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
+    "docs:dev": "pnpm -C docs run docs:dev",
+    "docs:build": "pnpm -C docs run docs:build",
+    "docs:preview": "pnpm -C docs run docs:preview",
     "test:ui": "vitest --ui",
-    "test": "vitest",
+    "test": "pnpm run build && vitest run",
     "typecheck": "tsc --noEmit",
     "commit": "cz",
     "prepublishOnly": "pnpm run build",
@@ -45,12 +48,14 @@
     "format": "prettier --write \"**/*.{ts,js,vue,json,md}\"",
     "prepare": "simple-git-hooks",
     "release": "bumpp -r --commit \"chore: release v%s\" --push --tag",
-    "example": "node ./dist/index.mjs"
+    "example": "node ./dist/index.mjs",
+    "example:view": "node ./dist/index.mjs view",
+    "example:help": "node ./dist/index.mjs help"
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
     "jiti": "^2.7.0",
-    "kolorist": "^1.8.0"
+    "picomatch": "^4.0.7"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^9.3.0",
@@ -58,6 +63,7 @@
     "@commitlint/config-conventional": "^21.0.2",
     "@commitlint/types": "^21.0.1",
     "@types/node": "^26.1.1",
+    "@types/picomatch": "^4.0.3",
     "@vitest/ui": "4.1.11",
     "bumpp": "^11.1.0",
     "commitizen": "^4.3.2",

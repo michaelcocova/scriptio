@@ -1,41 +1,42 @@
-import type { ScriptCliConfig } from './types'
+import type { ResolvedScriptMap, UserConfig } from './types'
 import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { createJiti } from 'jiti'
+import { mergeScripts } from './scripts'
 
-export function defineConfig<T extends ScriptCliConfig>(config: T): T {
+export function defineConfig<T extends UserConfig>(config: T): T {
   return config
 }
 
-const configNames = ['scriptio.config.ts', 'scriptio.config.mts', 'scriptio.config.js']
-
-export async function loadConfig(cwd: string, configArg?: string): Promise<ScriptCliConfig> {
-  const file = configArg
-    ? resolve(cwd, configArg)
-    : configNames.map(name => join(cwd, name)).find(existsSync)
-  if (!file || !existsSync(file)) {
-    throw new Error(
-      configArg
-        ? `未找到配置文件：${file}`
-        : '未找到配置文件，请在项目根目录创建 scriptio.config.ts 或通过 --config 指定',
-    )
+export async function loadConfig(cwd: string, configArg?: string): Promise<Omit<UserConfig, 'scripts'> & { scripts: ResolvedScriptMap }> {
+  const file = resolve(cwd, configArg ?? 'scriptio.config.ts')
+  if (!existsSync(file)) {
+    throw new Error(`未找到配置文件：${file}`)
   }
-
-  const jiti = createJiti(import.meta.url)
-  const config = await jiti.import(file, {
-    default: true,
-  })
-  const candidate = config as Partial<ScriptCliConfig> | undefined
-  if (
-    !candidate
-    || typeof candidate !== 'object'
-    || !Array.isArray(candidate.steps)
-    || candidate.steps.length === 0
-    || !candidate.commands
-    || typeof candidate.commands !== 'object'
-    || Array.isArray(candidate.commands)
-  ) {
-    throw new Error(`${file} 必须通过 defineConfig 导出 steps 和 commands`)
+  try {
+    const jiti = createJiti(import.meta.url, { moduleCache: false })
+    const config = await jiti.import<UserConfig>(file, { default: true })
+    if (!config || typeof config !== 'object') {
+      throw new Error('必须默认导出包含 scripts 的配置对象')
+    }
+    // 仅在加载边界统一字符串和对象写法，执行与展示共用相同的最终定义。
+    const scripts = Object.fromEntries(Object.entries(mergeScripts(config.scripts)).map(([name, script]) => [
+      name,
+      typeof script === 'string' ? { command: script } : script,
+    ]))
+    if (config.env !== undefined) {
+      if (!config.env || typeof config.env !== 'object' || Array.isArray(config.env)) {
+        throw new Error('env 必须是环境变量规则对象')
+      }
+      for (const [rule, env] of Object.entries(config.env)) {
+        if (!rule.trim() || !env || typeof env !== 'object' || Array.isArray(env)
+          || Object.values(env).some(value => value !== undefined && typeof value !== 'string')) {
+          throw new Error(`非法 env 规则：${rule}`)
+        }
+      }
+    }
+    return { env: config.env, scripts }
+  } catch (error) {
+    throw new Error(`加载配置失败：${file}\n${error instanceof Error ? error.message : String(error)}`, { cause: error })
   }
-  return config as ScriptCliConfig
 }

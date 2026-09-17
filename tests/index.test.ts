@@ -1,952 +1,222 @@
-import type { ScriptCliConfig } from '../src/types'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import process from 'node:process'
-import { pathToFileURL } from 'node:url'
-import { autocomplete, autocompleteMultiselect, confirm, multiselect, select, text } from '@clack/prompts'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { buildArgs, parseArgs } from '../src/args'
-import { loadConfig } from '../src/config'
-import { main } from '../src/index'
-import { isCliEntry } from '../src/is-cli-entry'
-import { runCommands } from '../src/runner'
+import type {
+  EnvContext,
+  MatrixOptions,
+  MatrixValues,
+  ScriptConfig,
+  ScriptEnv,
+  ScriptEnvConfig,
+  ScriptioConfig,
+  ScriptMap,
+} from '../src/index'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import { parseArgs } from '../src/args'
+import { resolveEnv } from '../src/env'
+import * as api from '../src/index'
+import { defineConfig, defineEnv, defineScripts } from '../src/index'
+import { mergeScripts } from '../src/scripts'
 
-const originalIsTTY = process.stdout.isTTY
+describe('v1 public API', () => {
+  it('只导出必要运行时 API；defineConfig 不执行脚本', () => {
+    expect(Object.keys(api).sort()).toEqual(['defineConfig', 'defineEnv', 'defineScripts'])
+    const config = { scripts: { build: 'never-execute-this' } }
+    expect(defineConfig(config)).toBe(config)
+  })
+  it('导出配置文件需要显式标注的类型', () => {
+    type RuntimeKeys = keyof typeof api
+    expectTypeOf<RuntimeKeys>().toEqualTypeOf<'defineConfig' | 'defineEnv' | 'defineScripts'>()
 
-vi.mock('@clack/prompts', () => ({
-  autocomplete: vi.fn(),
-  autocompleteMultiselect: vi.fn(),
-  cancel: vi.fn(),
-  confirm: vi.fn(),
-  intro: vi.fn(),
-  isCancel: vi.fn(() => false),
-  log: {
-    error: vi.fn(),
-    info: vi.fn(),
-    message: vi.fn(),
-    step: vi.fn(),
-    success: vi.fn(),
-    warn: vi.fn(),
-  },
-  multiselect: vi.fn(),
-  outro: vi.fn(),
-  select: vi.fn(),
-  text: vi.fn(),
-}))
+    const env: ScriptEnv = { NODE_ENV: 'test' }
+    const envConfig: ScriptEnvConfig = { 'build:*': env }
+    const scripts: ScriptConfig = { build: 'vite build' }
+    const config: ScriptioConfig = { env: envConfig, scripts }
+    expect(defineConfig(config)).toBe(config)
 
-afterEach(() => {
-  vi.restoreAllMocks()
-  Object.defineProperty(process.stdout, 'isTTY', {
-    configurable: true,
-    value: originalIsTTY,
+    expectTypeOf<EnvContext['env']>().parameter(0).toEqualTypeOf<string>()
+  })
+  it('按声明顺序合并 maps，后者覆盖前者', () => {
+    const maps: ScriptMap[] = [{ build: 'build', lint: 'old' }, { lint: 'new' }]
+    expect(mergeScripts(maps)).toEqual({ build: 'build', lint: 'new' })
+    expect(defineScripts(() => maps)).toEqual(mergeScripts(maps))
+    expect(() => mergeScripts({ build: 1 } as never)).toThrow('string')
+    expect(() => defineScripts(() => ({ build: 'x' }) as never)).toThrow('数组')
+  })
+  it('支持与 Object 原型同名的 scripts', () => {
+    expect(Reflect.get(mergeScripts(JSON.parse('{"__proto__":"ok","constructor":"ctor"}')), '__proto__')).toBe('ok')
   })
 })
 
-describe('scriptio', () => {
-  it('loads scriptio.config.ts by default', async () => {
-    const cwd = createTempDir()
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-export default defineConfig({
-  commands: {
-    build: async () => {},
-  },
-  steps: [
-    {
-      key: 'mode',
-      message: 'mode',
-      options: [{ label: 'build', value: 'build' }],
-      type: 'select',
-    },
-  ],
-})
-`,
-    )
-
-    const config = await loadConfig(cwd)
-
-    expect(Object.keys(config.commands)).toEqual(['build'])
-    expect(config.steps).toHaveLength(1)
-  })
-
-  it('rejects config without commands', async () => {
-    const cwd = createTempDir()
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-export default defineConfig({
-  handle: async () => {},
-  steps: [
-    {
-      key: 'mode',
-      message: 'mode',
-      options: [{ label: 'build', value: 'build' }],
-      type: 'select',
-    },
-  ],
-})
-`,
-    )
-
-    await expect(loadConfig(cwd)).rejects.toThrow('必须通过 defineConfig 导出 steps 和 commands')
-  })
-
-  it('rejects config with empty steps', async () => {
-    const cwd = createTempDir()
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-export default defineConfig({
-  commands: {
-    build: async () => {},
-  },
-  steps: [],
-})
-`,
-    )
-
-    await expect(loadConfig(cwd)).rejects.toThrow('必须通过 defineConfig 导出 steps 和 commands')
-  })
-
-  it('prints help without requiring a config file', async () => {
-    const cwd = createTempDir()
-    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-
-    const code = await main(['--help'])
-
-    expect(code).toBe(0)
-    expect(stdoutSpy).toHaveBeenCalled()
-    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Usage: scriptio [OPTION]...')
-    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Run project tasks defined in scriptio.config.ts.')
-    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Options:')
-    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('Step Options:')
-    expect(stdoutSpy.mock.calls[0]?.[0]).toContain('display this help message')
-  })
-
-  it('parses select params with equals syntax without skipping later args', () => {
-    const config: ScriptCliConfig = {
-      commands: {},
-      steps: [
-        {
-          key: 'mode',
-          message: 'mode',
-          options: [{
-            label: 'build',
-            value: 'build',
-          }],
-          param: ['--mode', '-M'],
-          type: 'select',
-        },
-        {
-          key: 'app',
-          message: 'app',
-          options: [{
-            label: 'web',
-            value: 'web',
-          }],
-          param: ['--app', '-A'],
-          type: 'select',
-        },
-      ],
-    }
-
-    const parsed = parseArgs(['-M=build', '-A=web'], config)
-
-    expect(parsed.values).toEqual({
-      app: 'web',
-      mode: 'build',
-    })
-  })
-
-  it('matches symlinked bin entries by real path', () => {
-    const dir = createTempDir()
-    const real = join(dir, 'index.mjs')
-    const link = join(dir, 'node_modules', 'scriptio', 'index.mjs')
-    mkdirSync(dirname(link), {
-      recursive: true,
-    })
-    writeFileSync(real, '')
-    symlinkSync(real, link)
-
-    const moduleUrl = pathToFileURL(realpathSync(real)).href
-
-    expect(isCliEntry(link, moduleUrl)).toBe(true)
-    expect(isCliEntry(link, pathToFileURL(join(dir, 'other.mjs')).href)).toBe(false)
-  })
-
-  it('builds args with the first param as the primary output flag', () => {
-    const config: ScriptCliConfig = {
-      commands: {},
-      steps: [
-        {
-          key: 'mode',
-          message: 'mode',
-          options: [{
-            label: 'build',
-            value: 'build',
-          }],
-          param: ['--mode', '-M'],
-          type: 'select',
-        },
-        {
-          key: 'deploy',
-          message: 'deploy',
-          param: ['--deploy', '-D'],
-          type: 'confirm',
-        },
-      ],
-    }
-
-    expect(buildArgs(config, {
-      deploy: true,
-      mode: 'build',
-    })).toEqual(['--mode', 'build', '--deploy'])
-  })
-
-  it('parses repeated multiselect params and builds args', () => {
-    const config: ScriptCliConfig = {
-      commands: {},
-      steps: [
-        {
-          key: 'apps',
-          message: 'apps',
-          options: [
-            {
-              label: 'www',
-              value: 'www',
-            },
-            {
-              label: 'client',
-              value: 'client',
-            },
-          ],
-          param: ['--apps', '-A'],
-          type: 'multiselect',
-        },
-      ],
-    }
-
-    expect(parseArgs(['--apps', 'www', '--apps', 'client'], config).values).toEqual({
-      apps: ['www', 'client'],
-    })
-    expect(buildArgs(config, {
-      apps: ['www', 'client'],
-    })).toEqual(['--apps', 'www', '--apps', 'client'])
-  })
-
-  it('parses text and searchable params', () => {
-    const config: ScriptCliConfig = {
-      commands: {},
-      steps: [
-        {
-          key: 'tag',
-          message: 'tag',
-          param: '--tag',
-          type: 'text',
-        },
-        {
-          key: 'env',
-          message: 'env',
-          options: [{
-            label: 'staging',
-            value: 'staging',
-          }],
-          param: '--env',
-          type: 'autocomplete',
-        },
-        {
-          key: 'apps',
-          message: 'apps',
-          options: [{
-            label: 'www',
-            value: 'www',
-          }],
-          param: '--apps',
-          type: 'autocompleteMultiselect',
-        },
-      ],
-    }
-
-    expect(parseArgs(['--tag', 'v1', '--env', 'staging', '--apps', 'www'], config).values).toEqual({
-      apps: ['www'],
-      env: 'staging',
-      tag: 'v1',
-    })
-  })
-
-  it('parses values for every step type', () => {
-    const config: ScriptCliConfig = {
-      commands: {},
-      steps: [
-        {
-          key: 'mode',
-          message: 'mode',
-          options: [{ label: 'dev', value: 'dev' }],
-          param: '--mode',
-          type: 'select',
-        },
-        {
-          key: 'env',
-          message: 'env',
-          options: [{ label: 'staging', value: 'staging' }],
-          param: '--env',
-          type: 'autocomplete',
-        },
-        {
-          key: 'apps',
-          message: 'apps',
-          options: [
-            { label: 'web', value: 'web' },
-            { label: 'client', value: 'client' },
-          ],
-          param: '--apps',
-          type: 'multiselect',
-        },
-        {
-          key: 'tags',
-          message: 'tags',
-          options: [
-            { label: 'a', value: 'a' },
-            { label: 'b', value: 'b' },
-          ],
-          param: '--tags',
-          type: 'autocompleteMultiselect',
-        },
-        {
-          key: 'tag',
-          message: 'tag',
-          param: '--tag',
-          type: 'text',
-        },
-        {
-          key: 'deploy',
-          message: 'deploy',
-          param: '--deploy',
-          type: 'confirm',
-        },
-      ],
-    }
-
-    const parsed = parseArgs([
-      '--mode',
-      'dev',
-      '--env=staging',
-      '--apps',
-      'web',
-      '--apps',
-      'client',
-      '--tags=a',
-      '--tags=b',
-      '--tag',
-      'v1',
-      '--deploy=false',
-    ], config)
-
-    expect(parsed.values).toEqual({
-      apps: ['web', 'client'],
-      deploy: false,
-      env: 'staging',
-      mode: 'dev',
-      tag: 'v1',
-      tags: ['a', 'b'],
-    })
-    expect(buildArgs(config, parsed.values)).toEqual([
-      '--mode',
-      'dev',
-      '--env',
-      'staging',
-      '--apps',
-      'web',
-      '--apps',
-      'client',
-      '--tags',
-      'a',
-      '--tags',
-      'b',
-      '--tag',
-      'v1',
+describe('matrix', () => {
+  it('为不同 matrix 保留同名组，覆盖时替换完整脚本定义', () => {
+    const scripts = defineScripts(({ matrix }) => [
+      matrix({ group: 'dev', name: 'dev:{app}', template: 'dev {app}', values: { app: ['sso'] } }),
+      matrix({ group: 'dev', name: 'dev:{env}', template: 'dev {env}', values: { env: ['test'] } }),
+      { 'dev:test': { command: 'custom', group: 'tools', label: '自定义' } },
     ])
+    expect(scripts).toEqual({
+      'dev:sso': { command: 'dev sso', group: 'dev' },
+      'dev:test': { command: 'custom', group: 'tools', label: '自定义' },
+    })
+    expect(mergeScripts([scripts, { 'dev:test': 'plain' }])['dev:test']).toBe('plain')
   })
-
-  it('keeps --config out of parsed step values', () => {
-    const config: ScriptCliConfig = {
-      commands: {},
-      steps: [
-        {
-          key: 'mode',
-          message: 'mode',
-          options: [{ label: 'dev', value: 'dev' }],
-          param: '--mode',
-          type: 'select',
+  it('展开 name 函数，推导字面量类型，并支持 label 函数', () => {
+    const calls: unknown[] = []
+    const scripts = defineScripts(({ matrix }) => [
+      matrix({
+        command: (context) => {
+          expectTypeOf(context.app).toEqualTypeOf<'admin' | 'sso'>()
+          expectTypeOf(context.env).toEqualTypeOf<'dev' | 'test'>()
+          calls.push(context)
+          return `build ${context.env} ${context.app}`
         },
-      ],
-    }
-
-    const parsed = parseArgs(['-C', './custom.config.ts', '--mode', 'dev'], config)
-
-    expect(parsed.config).toBe('./custom.config.ts')
-    expect(parsed.values).toEqual({
-      mode: 'dev',
-    })
+        label: values => `${values.env} / ${values.app}`,
+        name: values => `build:${values.env}:${values.app}`,
+        // env 放在 app 前面，用声明顺序验证 matrix 的生成顺序。
+        values: {
+          env: ['dev', 'test'],
+          // eslint-disable-next-line perfectionist/sort-objects
+          app: ['admin', 'sso'],
+        },
+      }),
+    ])
+    expect(Object.keys(scripts)).toEqual([
+      'build:dev:admin',
+      'build:dev:sso',
+      'build:test:admin',
+      'build:test:sso',
+    ])
+    expect(calls).toHaveLength(4)
+    expect(calls[0]).toEqual({ app: 'admin', env: 'dev' })
+    expect(scripts['build:test:sso']).toEqual({ command: 'build test sso', label: 'test / sso' })
   })
-
-  it('skips conditional steps in non-interactive mode', async () => {
-    const cwd = createTempDir()
-    const output = join(cwd, 'out.json')
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-import { writeFileSync } from 'node:fs'
-
-export default defineConfig({
-  commands: {
-    build: async ({ values }) => {
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify(values))
-    },
-    dev: async ({ values }) => {
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify(values))
-    },
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: '--mode',
-      options: [
-        { value: 'dev', label: 'dev' },
-        { value: 'build', label: 'build' },
-      ],
-    },
-    {
-      key: 'clean',
-      type: 'confirm',
-      message: 'clean',
-      param: '--clean',
-      condition: values => values.mode === 'build',
-    },
-  ],
-})
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: false,
-    })
-
-    const code = await main(['--mode', 'dev'])
-
-    expect(code).toBe(0)
-    expect(JSON.parse(readFileSync(output, 'utf-8'))).toEqual({
-      mode: 'dev',
-    })
-
-    const buildCode = await main(['--mode', 'build'])
-
-    expect(buildCode).toBe(0)
-    expect(JSON.parse(readFileSync(output, 'utf-8'))).toEqual({
-      clean: false,
-      mode: 'build',
-    })
+  it('替换 template 和重复占位符，允许 maps 之间覆盖', () => {
+    expect(defineScripts(({ matrix }) => [
+      matrix({ name: '{env}:{env}', template: 'echo {env} {env}', values: { env: ['test'] } }),
+      { 'test:test': 'override' },
+    ])).toEqual({ 'test:test': 'override' })
+    expect(defineScripts(({ matrix }) => [
+      matrix({ name: 'build:{env}:{app}', template: 'build {env} --app {app}', values: { app: ['sso'], env: ['test'] } }),
+    ])['build:test:sso']).toBe('build test --app sso')
   })
-
-  it('asks conditional steps and multiselect in interactive mode', async () => {
-    const cwd = createTempDir()
-    const output = join(cwd, 'out.json')
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-import { writeFileSync } from 'node:fs'
-
-export default defineConfig({
-  commands: {
-    build: async ({ values }) => {
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify(values))
-    },
-    dev: async ({ values }) => {
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify(values))
-    },
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: '--mode',
-      options: [
-        { value: 'dev', label: 'dev' },
-        { value: 'build', label: 'build' },
-      ],
-    },
-    {
-      key: 'apps',
-      type: 'multiselect',
-      message: 'apps',
-      param: '--apps',
-      options: [
-        { value: 'www', label: 'www' },
-        { value: 'client', label: 'client' },
-      ],
-    },
-    {
-      key: 'clean',
-      type: 'confirm',
-      message: 'clean',
-      param: '--clean',
-      condition: values => values.mode === 'build',
-    },
-  ],
-})
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: true,
-    })
-
-    vi.mocked(select).mockResolvedValueOnce('dev')
-    vi.mocked(multiselect).mockResolvedValueOnce(['www', 'client'])
-
-    const code = await main([])
-
-    expect(code).toBe(0)
-    expect(confirm).not.toHaveBeenCalled()
-
-    vi.mocked(select).mockResolvedValueOnce('build')
-    vi.mocked(multiselect).mockResolvedValueOnce(['client'])
-    vi.mocked(confirm).mockResolvedValueOnce(false)
-
-    const buildCode = await main([])
-
-    expect(buildCode).toBe(0)
-    expect(confirm).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(readFileSync(output, 'utf-8'))).toEqual({
-      apps: ['client'],
-      clean: false,
-      mode: 'build',
-    })
+  it.each([
+    [{ group: '', name: 'build:{env}', template: 'echo ok', values: { env: ['test'] } }, 'group'],
+    [{ name: '', template: 'echo ok', values: { env: ['test'] } }, 'name'],
+    [{ name: 'build:{missing}', template: 'echo ok', values: { env: ['test'] } }, '不存在 Matrix Variable'],
+    [{ name: 'build:{env}', template: 'echo {missing}', values: { env: ['test'] } }, '不存在 Matrix Variable'],
+    [{ name: 'build:{env}', template: 'echo ok', values: {} }, 'values 不能为空'],
+    [{ name: 'build:{env}', template: 'echo ok', values: { env: [] } }, '非空字符串数组'],
+    [{ name: 'build', template: 'echo ok', values: { env: ['test', 'pre'] } }, '重复生成'],
+    [{ name: () => 'build', template: 'echo ok', values: { env: ['test', 'pre'] } }, '重复生成'],
+    [{ name: 'build:{env', template: 'echo ok', values: { env: ['test'] } }, '非法 Template'],
+    [{ name: 'build:$' + '{env}', template: 'echo ok', values: { env: ['test'] } }, '非法 Template'],
+    [{ name: 'build:{env}', template: 'echo $' + '{env}', values: { env: ['test'] } }, '非法 Template'],
+    [{ command: (): string => 'ok', name: 'build:{env}', template: 'echo ok', values: { env: ['test'] } }, '只能提供'],
+    [{ name: 'build:{env}', values: { env: ['test'] } }, '只能提供'],
+    [{ command: (): number => 1, name: 'build:{env}', values: { env: ['test'] } }, 'string'],
+  ])('拒绝非法 matrix：%j', (options, message) => {
+    expect(() => defineScripts(({ matrix }) => [matrix(options as MatrixOptions<MatrixValues>)])).toThrow(message)
   })
-
-  it('asks for every step type in interactive mode', async () => {
-    const cwd = createTempDir()
-    const output = join(cwd, 'out.json')
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-import { writeFileSync } from 'node:fs'
-
-export default defineConfig({
-  commands: {
-    dev: async ({ values }) => {
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify(values))
-    },
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: '--mode',
-      options: [{ label: 'dev', value: 'dev' }],
-    },
-    {
-      key: 'env',
-      type: 'autocomplete',
-      message: 'env',
-      param: '--env',
-      options: [{ label: 'staging', value: 'staging' }],
-    },
-    {
-      key: 'apps',
-      type: 'multiselect',
-      message: 'apps',
-      param: '--apps',
-      options: [
-        { label: 'web', value: 'web' },
-        { label: 'client', value: 'client' },
-      ],
-    },
-    {
-      key: 'tags',
-      type: 'autocompleteMultiselect',
-      message: 'tags',
-      param: '--tags',
-      options: [
-        { label: 'a', value: 'a' },
-        { label: 'b', value: 'b' },
-      ],
-    },
-    {
-      key: 'tag',
-      type: 'text',
-      message: 'tag',
-      param: '--tag',
-    },
-    {
-      key: 'deploy',
-      type: 'confirm',
-      message: 'deploy',
-      param: '--deploy',
-    },
-  ],
-})
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: true,
-    })
-    vi.mocked(select).mockResolvedValueOnce('dev')
-    vi.mocked(autocomplete).mockResolvedValueOnce('staging')
-    vi.mocked(multiselect).mockResolvedValueOnce(['web', 'client'])
-    vi.mocked(autocompleteMultiselect).mockResolvedValueOnce(['a', 'b'])
-    vi.mocked(text).mockResolvedValueOnce('v1')
-    vi.mocked(confirm).mockResolvedValueOnce(true)
-
-    const code = await main([])
-
-    expect(code).toBe(0)
-    expect(JSON.parse(readFileSync(output, 'utf-8'))).toEqual({
-      apps: ['web', 'client'],
-      deploy: true,
-      env: 'staging',
-      mode: 'dev',
-      tag: 'v1',
-      tags: ['a', 'b'],
-    })
+  it('typeScript 约束 command/template XOR', () => {
+    const values = { env: ['test'] } as const
+    // @ts-expect-error 两者同时存在必须报错
+    const both: MatrixOptions<typeof values> = { command: () => 'x', name: '{env}', template: 'x', values }
+    // @ts-expect-error 两者都不提供必须报错
+    const neither: MatrixOptions<typeof values> = { name: '{env}', values }
+    expect(both).toBeDefined()
+    expect(neither).toBeDefined()
   })
-
-  it('uses defaultValues in non-interactive mode', async () => {
-    const cwd = createTempDir()
-    const output = join(cwd, 'out.json')
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-import { writeFileSync } from 'node:fs'
-
-export default defineConfig({
-  commands: {
-    build: async ({ values }) => {
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify(values))
-    },
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: ['--mode', '-M'],
-      options: [{ value: 'build', label: 'build' }],
-    },
-    {
-      key: 'app',
-      type: 'select',
-      message: 'app',
-      param: ['--app', '-A'],
-      options: [{ value: 'web', label: 'web' }],
-    },
-    {
-      key: 'deploy',
-      type: 'confirm',
-      message: 'deploy',
-      param: ['--deploy', '-D'],
-    },
-  ],
-  defaultValues: {
-    app: 'web',
-  },
 })
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: false,
-    })
 
-    const code = await main(['--mode', 'build'])
+describe('env', () => {
+  it('defineEnv 支持 env 和 each，并保留 each value 类型', () => {
+    const envs = ['dev', 'test'] as const
+    const config = defineEnv(({ each, env }) => [
+      env('start', {
+        NODE_ENV: 'development',
+      }),
 
-    expect(code).toBe(0)
-    expect(JSON.parse(readFileSync(output, 'utf-8'))).toEqual({
-      app: 'web',
-      deploy: false,
-      mode: 'build',
-    })
-  })
+      each(envs, 'start:{env}', (value) => {
+        expectTypeOf(value).toEqualTypeOf<'dev' | 'test'>()
+        return {
+          NODE_ENV: value === 'dev' ? 'development' : value,
+        }
+      }),
 
-  it('uses defaultValues for every step type in non-interactive mode', async () => {
-    const cwd = createTempDir()
-    const output = join(cwd, 'out.json')
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-import { writeFileSync } from 'node:fs'
+      env('build:*', {
+        NODE_OPTIONS: '--max-old-space-size=8192',
+      }),
+    ])
 
-export default defineConfig({
-  commands: {
-    build: async ({ values }) => {
-      writeFileSync(${JSON.stringify(output)}, JSON.stringify(values))
-    },
-  },
-  defaultValues: {
-    apps: ['client'],
-    deploy: true,
-    env: 'staging',
-    mode: 'build',
-    tag: 'v1',
-    tags: ['a'],
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: '--mode',
-      options: [{ label: 'build', value: 'build' }],
-    },
-    {
-      key: 'env',
-      type: 'autocomplete',
-      message: 'env',
-      param: '--env',
-      options: [{ label: 'staging', value: 'staging' }],
-    },
-    {
-      key: 'apps',
-      type: 'multiselect',
-      message: 'apps',
-      param: '--apps',
-      options: [
-        { label: 'web', value: 'web' },
-        { label: 'client', value: 'client' },
-      ],
-    },
-    {
-      key: 'tags',
-      type: 'autocompleteMultiselect',
-      message: 'tags',
-      param: '--tags',
-      options: [
-        { label: 'a', value: 'a' },
-        { label: 'b', value: 'b' },
-      ],
-    },
-    {
-      key: 'tag',
-      type: 'text',
-      message: 'tag',
-      param: '--tag',
-    },
-    {
-      key: 'deploy',
-      type: 'confirm',
-      message: 'deploy',
-      param: '--deploy',
-    },
-  ],
-})
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: false,
-    })
-
-    const code = await main(['--mode', 'build'])
-
-    expect(code).toBe(0)
-    expect(JSON.parse(readFileSync(output, 'utf-8'))).toEqual({
-      apps: ['client'],
-      deploy: true,
-      env: 'staging',
-      mode: 'build',
-      tag: 'v1',
-      tags: ['a'],
-    })
-  })
-
-  it('fails when the first step value has no matching command', async () => {
-    const cwd = createTempDir()
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-export default defineConfig({
-  commands: {
-    dev: async () => {},
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: '--mode',
-      options: [{ value: 'build', label: 'build' }],
-    },
-  ],
-})
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: false,
-    })
-
-    await expect(main(['--mode', 'build'])).rejects.toThrow('未找到命令：build')
-  })
-
-  it('runs success and finally hooks after a successful command', async () => {
-    const cwd = createTempDir()
-    const successFile = join(cwd, 'success.json')
-    const finallyFile = join(cwd, 'finally.json')
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-import { writeFileSync } from 'node:fs'
-
-export default defineConfig({
-  commands: {
-    build: async () => {},
-  },
-  hooks: {
-    finally: async ({ values }) => {
-      writeFileSync(${JSON.stringify(finallyFile)}, JSON.stringify(values))
-    },
-    success: async ({ values }) => {
-      writeFileSync(${JSON.stringify(successFile)}, JSON.stringify(values))
-    },
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: '--mode',
-      options: [{ value: 'build', label: 'build' }],
-    },
-  ],
-})
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: false,
-    })
-
-    const code = await main(['--mode', 'build'])
-
-    expect(code).toBe(0)
-    expect(JSON.parse(readFileSync(successFile, 'utf-8'))).toEqual({
-      mode: 'build',
-    })
-    expect(JSON.parse(readFileSync(finallyFile, 'utf-8'))).toEqual({
-      mode: 'build',
-    })
-  })
-
-  it('runs error and finally hooks when a command fails', async () => {
-    const cwd = createTempDir()
-    const errorFile = join(cwd, 'error.json')
-    const finallyFile = join(cwd, 'finally.json')
-    writeFileSync(
-      join(cwd, 'scriptio.config.ts'),
-      `${defineConfigImport()}
-import { writeFileSync } from 'node:fs'
-
-export default defineConfig({
-  commands: {
-    build: async () => {
-      throw new Error('build failed')
-    },
-  },
-  hooks: {
-    error: async (error, { values }) => {
-      writeFileSync(${JSON.stringify(errorFile)}, JSON.stringify({ error: String(error), values }))
-    },
-    finally: async ({ values }) => {
-      writeFileSync(${JSON.stringify(finallyFile)}, JSON.stringify(values))
-    },
-  },
-  steps: [
-    {
-      key: 'mode',
-      type: 'select',
-      message: 'mode',
-      param: '--mode',
-      options: [{ value: 'build', label: 'build' }],
-    },
-  ],
-})
-`,
-    )
-    vi.spyOn(process, 'cwd').mockReturnValue(cwd)
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: false,
-    })
-
-    const code = await main(['--mode', 'build'])
-
-    expect(code).toBe(1)
-    expect(JSON.parse(readFileSync(errorFile, 'utf-8'))).toEqual({
-      error: 'Error: build failed',
-      values: {
-        mode: 'build',
+    expect(config).toEqual({
+      'build:*': {
+        NODE_OPTIONS: '--max-old-space-size=8192',
+      },
+      'start': {
+        NODE_ENV: 'development',
+      },
+      'start:dev': {
+        NODE_ENV: 'development',
+      },
+      'start:test': {
+        NODE_ENV: 'test',
       },
     })
-    expect(JSON.parse(readFileSync(finallyFile, 'utf-8'))).toEqual({
-      mode: 'build',
-    })
   })
 
-  it('runs array commands and rejects when a command fails', async () => {
-    const dir = createTempDir()
-    const first = join(dir, 'first.txt')
-    const second = join(dir, 'second.txt')
+  it('拒绝非法 defineEnv 配置', () => {
+    expect(() => defineEnv(() => ({ start: { NODE_ENV: 'development' } }) as never)).toThrow('数组')
+    expect(() => defineEnv(({ env }) => [env('', { NODE_ENV: 'development' })])).toThrow('pattern')
+    expect(() => defineEnv(({ env }) => [env('start', { NODE_ENV: 1 } as never)])).toThrow('变量值')
+    expect(() => defineEnv(({ each }) => [each([], 'start:{env}', () => ({ NODE_ENV: 'development' }))])).toThrow('非空字符串数组')
+    expect(() => defineEnv(({ each }) => [each(['dev'], 'start', () => ({ NODE_ENV: 'development' }))])).toThrow('{env}')
+  })
 
-    await runCommands([
-      `node -e 'require("node:fs").writeFileSync(${JSON.stringify(first)}, "first")'`,
-      `node -e 'require("node:fs").writeFileSync(${JSON.stringify(second)}, "second")'`,
+  it.each(['build:test', 'build:test:sso', 'build:release', 'build:release:website', 'build:dev', 'build:six'])('匹配 %s', (name) => {
+    expect(resolveEnv(name, { 'build:*,!build:packages': { NODE_OPTIONS: '8192' } }, {})).toEqual({ NODE_OPTIONS: '8192' })
+  })
+  it.each(['build:packages', 'dev'])('排除 %s', (name) => {
+    expect(resolveEnv(name, { 'build:*,!build:packages': { NODE_OPTIONS: '8192' } }, {})).toEqual({})
+  })
+  it('保持声明顺序并删除 undefined 环境变量', () => {
+    const rules = Object.fromEntries([
+      ['*', { DEBUG: 'true', NODE_ENV: 'development' }],
+      ['build:*', { NODE_OPTIONS: '8192' }],
+      ['build:release', { DEBUG: undefined, INHERITED: undefined, NODE_ENV: 'production' }],
     ])
-
-    expect(readFileSync(first, 'utf-8')).toBe('first')
-    expect(readFileSync(second, 'utf-8')).toBe('second')
-    await expect(runCommands('command-that-does-not-exist-12345')).rejects.toThrow('命令执行失败')
+    const base = { INHERITED: 'old', KEEP: 'yes' }
+    expect(resolveEnv('build:release', rules, base)).toEqual({ KEEP: 'yes', NODE_ENV: 'production', NODE_OPTIONS: '8192' })
+    expect(base.INHERITED).toBe('old')
   })
-
-  it('runs a single string command', async () => {
-    const dir = createTempDir()
-    const file = join(dir, 'single.txt')
-
-    await runCommands(`node -e 'require("node:fs").writeFileSync(${JSON.stringify(file)}, "ok")'`)
-
-    expect(readFileSync(file, 'utf-8')).toBe('ok')
+  it.each([
+    ['build:{dev,test},!build:dev', 'build:test', true],
+    ['build:{dev,test},!build:dev', 'build:dev', false],
+    ['!build:packages', 'dev', true],
+    ['!build:packages', 'build:packages', false],
+    ['dev,build:test', 'build:test', true],
+    ['build:te?t', 'build:test', true],
+    ['build:[abc]', 'build:b', true],
+    ['build:[,a],dev', 'build:,', true],
+    ['build:**', 'build:test:sso', true],
+    ['build:@(test|release)', 'build:release', true],
+    ['!(dev)', 'build:test', true],
+    ['build:test\\,sso,dev', 'build:test,sso', true],
+  ])('支持 glob/composition %s', (rule, name, matched) => {
+    expect(resolveEnv(name, { [rule]: { MATCHED: 'yes' } }, {})).toEqual(matched ? { MATCHED: 'yes' } : {})
   })
-
-  it('propagates the non-zero exit code from a failed command', async () => {
-    await expect(runCommands(`node -e 'process.exit(7)'`)).rejects.toMatchObject({
-      exitCode: 7,
-    })
+  it('精确匹配不误命中，拒绝空 pattern', () => {
+    expect(resolveEnv('build:test:sso', { 'build:test': { EXACT: 'yes' } }, {})).toEqual({})
+    expect(() => resolveEnv('build', { 'build,,dev': {} }, {})).toThrow('非法 env Pattern')
   })
 })
 
-function createTempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'scriptio-'))
-}
-
-function defineConfigImport(): string {
-  return `import { defineConfig } from ${JSON.stringify(resolve(process.cwd(), 'src/index.ts'))}`
-}
+describe('cLI 参数', () => {
+  it('支持两种入口及自定义配置', () => {
+    expect(parseArgs([])).toEqual({ help: false })
+    expect(parseArgs(['build:test'])).toEqual({ help: false, script: 'build:test' })
+    expect(parseArgs(['--config=custom.ts', 'build:test:sso'])).toEqual({ config: 'custom.ts', help: false, script: 'build:test:sso' })
+    expect(parseArgs(['build:test', '-C', 'custom.ts']).config).toBe('custom.ts')
+    expect(parseArgs(['--', '-custom']).script).toBe('-custom')
+  })
+  it.each([['--config'], ['--config='], ['--config', '--help'], ['--wrong'], ['one', 'two']])('拒绝非法参数 %j', (...argv) => {
+    expect(() => parseArgs(argv)).toThrow()
+  })
+})
