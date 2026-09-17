@@ -134,7 +134,7 @@ POSIX 平台上，Scriptio 会在收到 `SIGINT` / `SIGTERM` 时转发给子进�
 ```json
 {
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```

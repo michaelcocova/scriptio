@@ -63,7 +63,7 @@ scriptio --config=./configs/project.ts --help
 ```json
 {
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```
@@ -81,7 +81,7 @@ pnpm start view
 {
   "name": "@onecells/admin",
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```

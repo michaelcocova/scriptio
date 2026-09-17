@@ -57,7 +57,7 @@ describe('真实 CLI / TypeScript 配置', () => {
     const { scripts } = await loadConfig(cwd)
     expect(scripts['build:test'].command).toBe('turbo run build:test --filter="./apps/*"')
     expect(scripts['build:test:sso'].command).toBe('turbo run build:test --filter=@onecells/sso')
-    expect(scripts['start:sso'].command).toBe('turbo watch dev --filter=@onecells/sso')
+    expect(scripts['dev:sso'].command).toBe('turbo watch dev --filter=@onecells/sso')
   })
 
   it('直接调用时能够找到项目本地 bin', () => {

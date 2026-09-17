@@ -22,7 +22,7 @@ pnpm add -D scriptio
 ```json
 {
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```
@@ -342,7 +342,7 @@ TTY 中会启用颜色：树形线条为灰色，分组名为加粗蓝色，脚�
 ```json
 {
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```
@@ -353,7 +353,7 @@ TTY 中会启用颜色：树形线条为灰色，分组名为加粗蓝色，脚�
 {
   "name": "@onecells/admin",
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```
@@ -436,7 +436,17 @@ matrix({
 - 开发环境：test、integration、qa、uat、staging、preproduction、demo
 - 构建环境：development、test、integration、qa、uat、staging、preproduction、demo
 
-开发脚本使用 `start` 前缀，构建脚本使用 `build` 前缀。每个环境都有“全部应用”和“单应用”两种脚本。
+开发脚本使用 `dev` 前缀，构建脚本使用 `build` 前缀。每个环境都有“全部应用”和“单应用”两种脚本。
+
+根项目和每个子项目都只保留一个 package script 入口，由 Scriptio 接管具体命令：
+
+```json
+{
+  "scripts": {
+    "start": "pnpm scriptio"
+  }
+}
+```
 
 ```ts
 import { defineConfig, defineEnv, defineScripts } from "scriptio";
@@ -444,8 +454,8 @@ import { defineConfig, defineEnv, defineScripts } from "scriptio";
 // 所有参与矩阵生成的应用。使用 as const 后，matrix 的 app 参数会推导为字面量联合类型。
 const apps = ["admin", "studio", "sso", "site", "mobile"] as const;
 
-// start 环境不包含 development，因为裸 start 就代表本地 development。
-const startEnvs = [
+// dev 环境不包含 development，因为裸 dev 就代表本地 development。
+const devEnvs = [
   "test",
   "integration",
   "qa",
@@ -482,45 +492,49 @@ export default defineConfig({
 
   scripts: defineScripts(({ matrix }) => [
     {
-      // 默认 start：启动所有应用的本地 development watch。
-      start: {
+      // 默认 dev：启动所有应用的本地 development watch。
+      dev: {
         command: 'turbo watch dev --filter="./apps/*"',
-        group: "start",
+        group: "dev",
+        label: "启动全部应用开发环境",
       },
     },
 
-    // start:admin / start:sso / ...
+    // dev:admin / dev:sso / ...
     // 只启动单个应用的本地 development watch。
     matrix({
       command: ({ app }) => `turbo watch dev --filter=${appFilter(app)}`,
-      group: "start",
-      name: "start:{app}",
+      group: "dev",
+      name: "dev:{app}",
+      label: "启动{app}开发环境",
       values: {
         app: apps,
       },
     }),
 
-    // start:test / start:qa / ...
+    // dev:test / dev:qa / ...
     // 启动某个环境下的全部应用。
     matrix({
       command: ({ env }) => `turbo watch dev:${env} --filter="./apps/*"`,
-      group: "start",
-      name: "start:{env}",
+      group: "dev",
+      name: "dev:{env}",
+      label: "启动全部应用{env}环境",
       values: {
-        env: startEnvs,
+        env: devEnvs,
       },
     }),
 
-    // start:test:admin / start:qa:sso / ...
+    // dev:test:admin / dev:qa:sso / ...
     // 启动某个环境下的单个应用。
     matrix({
       command: ({ app, env }) =>
         `turbo watch dev:${env} --filter=${appFilter(app)}`,
-      group: "start",
-      name: "start:{env}:{app}",
+      group: "dev",
+      name: "dev:{env}:{app}",
+      label: "启动{app}{env}环境",
       values: {
         app: apps,
-        env: startEnvs,
+        env: devEnvs,
       },
     }),
 
@@ -530,6 +544,7 @@ export default defineConfig({
       command: ({ env }) => `turbo run build:${env} --filter="./apps/*"`,
       group: "build",
       name: "build:{env}",
+      label: "构建全部应用{env}环境",
       values: {
         env: buildEnvs,
       },
@@ -542,6 +557,7 @@ export default defineConfig({
         `turbo run build:${env} --filter=${appFilter(app)}`,
       group: "build",
       name: "build:{env}:{app}",
+      label: "构建{app}{env}环境",
       values: {
         app: apps,
         env: buildEnvs,
@@ -572,8 +588,8 @@ export default defineConfig({
         group: "clean",
       },
       commit: "git add . && git-cz",
-      "start:docs": "turbo watch dev --filter=@onecells/docs-next",
-      "start:packages": 'turbo watch build:pk --filter="./packages-next/*"',
+      "dev:docs": "turbo watch dev --filter=@onecells/docs-next",
+      "dev:packages": 'turbo watch build:pk --filter="./packages-next/*"',
       format: "prettier --write src/",
       lint: "eslint . --fix --cache",
       prepare: "husky",
@@ -592,17 +608,17 @@ scriptio view
 
 ```text
 scripts
-├── start
-│   ├── start  turbo watch dev --filter="./apps/*"
-│   ├── start:admin  turbo watch dev --filter=@onecells/admin
-│   ├── start:sso  turbo watch dev --filter=@onecells/sso
-│   ├── start:test  turbo watch dev:test --filter="./apps/*"
-│   └── start:test:sso  turbo watch dev:test --filter=@onecells/sso
+├── dev
+│   ├── 启动全部应用开发环境 (dev)  turbo watch dev --filter="./apps/*"
+│   ├── 启动admin开发环境 (dev:admin)  turbo watch dev --filter=@onecells/admin
+│   ├── 启动sso开发环境 (dev:sso)  turbo watch dev --filter=@onecells/sso
+│   ├── 启动全部应用test环境 (dev:test)  turbo watch dev:test --filter="./apps/*"
+│   └── 启动sso test环境 (dev:test:sso)  turbo watch dev:test --filter=@onecells/sso
 ├── build
-│   ├── build:development  turbo run build:development --filter="./apps/*"
-│   ├── build:development:admin  turbo run build:development --filter=@onecells/admin
-│   ├── build:test  turbo run build:test --filter="./apps/*"
-│   ├── build:test:sso  turbo run build:test --filter=@onecells/sso
+│   ├── 构建全部应用development环境 (build:development)  turbo run build:development --filter="./apps/*"
+│   ├── 构建admin development环境 (build:development:admin)  turbo run build:development --filter=@onecells/admin
+│   ├── 构建全部应用test环境 (build:test)  turbo run build:test --filter="./apps/*"
+│   ├── 构建sso test环境 (build:test:sso)  turbo run build:test --filter=@onecells/sso
 │   └── 构建组件包 (build:packages)  turbo run build:pk --filter="./packages-next/*"
 ├── 添加组件 (add:widget)  pnpm dlx shadcn-vue@2.0.1 add
 ├── clean
@@ -610,8 +626,8 @@ scripts
 │   ├── clean:cache  rimraf apps/*/node_modules/.vite
 │   └── clean:out  rimraf 'apps/*/{dist,.output}' && rimraf ./dist
 ├── commit  git add . && git-cz
-├── start:docs  turbo watch dev --filter=@onecells/docs-next
-├── start:packages  turbo watch build:pk --filter="./packages-next/*"
+├── dev:docs  turbo watch dev --filter=@onecells/docs-next
+├── dev:packages  turbo watch build:pk --filter="./packages-next/*"
 ├── format  prettier --write src/
 ├── lint  eslint . --fix --cache
 └── prepare  husky
@@ -620,8 +636,8 @@ scripts
 ## 执行示例
 
 ```bash
-scriptio start
-scriptio start:test:sso
+scriptio dev
+scriptio dev:test:sso
 scriptio build:test
 scriptio build:test:sso
 scriptio build:packages

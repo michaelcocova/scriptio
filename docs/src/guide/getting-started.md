@@ -11,7 +11,7 @@ pnpm add -D scriptio
 ```json
 {
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```

@@ -67,7 +67,7 @@ pnpm add -D scriptio
 ```json
 {
   "scripts": {
-    "start": "scriptio"
+    "start": "pnpm scriptio"
   }
 }
 ```
@@ -151,6 +151,6 @@ Scriptio 不理解你的业务模型，也不替代构建工具。
 
 - 单项目里想用 TypeScript 管理脚本。
 - Monorepo 里想生成 `build:test:admin` 这类矩阵脚本。
-- 子项目只想保留一个 `"start": "scriptio"` 入口。
+- 子项目只想保留一个 `"start": "pnpm scriptio"` 入口。
 - 需要通过 glob 规则给部分脚本注入环境变量。
 - 想在 TTY 中搜索选择脚本，同时保留 `scriptio build:test` 这样的直接调用。
