@@ -1,7 +1,7 @@
 {
   "name": "scriptio",
   "type": "module",
-  "version": "0.0.1-beta.3",
+  "version": "1.0.0",
   "packageManager": "pnpm@11.7.0",
   "description": "A lightweight TypeScript script runner with matrix scripts and glob-based environment rules.",
   "author": {
