@@ -52,6 +52,36 @@ export default defineConfig({
 | `group`   | 否   | 交互选择和 `scriptio view` 使用的显式分组。 |
 | `label`   | 否   | 展示名称；执行和 env 匹配仍然使用脚本原名。 |
 
+## 生命周期与耗时
+
+可以在配置中监听一次脚本任务的生命周期：
+
+```ts
+export default defineConfig({
+  duration: true,
+  onStart: () => console.log("开始执行"),
+  onDone: () => console.log("执行完成"),
+  onError: (error) => console.error(error),
+  scripts: {
+    build: "vite build",
+  },
+});
+```
+
+`duration` 默认为 `true`。每次执行脚本后打印：
+
+```text
+build, 总耗时: 00:00:03.127
+```
+
+耗时格式固定为 `HH:mm:ss.SSS`。设置 `duration: false` 可以关闭耗时输出。
+
+- `onStart`：执行命令前调用。
+- `onDone`：命令退出码为 `0` 时调用。
+- `onError`：命令非零退出或执行异常时调用。
+
+`view`、`--help` 和取消交互选择不会触发 hooks，也不会打印耗时。
+
 ## defineScripts
 
 `defineScripts()` 用来组合普通 map 和 matrix 生成结果。

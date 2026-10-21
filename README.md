@@ -177,9 +177,17 @@ type ScriptConfig = ScriptMap | ScriptMap[];
 
 interface UserConfig {
   env?: ScriptEnvConfig;
+  duration?: boolean;
+  onStart?: () => void;
+  onDone?: () => void;
+  onError?: (error: Error) => void;
   scripts: ScriptConfig;
 }
 ```
+
+`duration` 默认为 `true`。每次执行脚本后会在命令输出末尾打印任务名称和总耗时，格式固定为 `HH:mm:ss.SSS`。设置为 `false` 可关闭。
+
+`onStart` 在执行前调用；命令成功时调用 `onDone`；命令非零退出或执行异常时调用 `onError`。`view`、`--help` 和取消交互选择不会触发这些回调。
 
 ### defineScripts
 

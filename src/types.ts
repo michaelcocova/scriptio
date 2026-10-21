@@ -12,7 +12,11 @@ export type ScriptEnvConfig = Record<string, ScriptEnv>
 export type ScriptConfig = ScriptMap | ScriptMap[]
 
 export interface UserConfig {
+  duration?: boolean
   env?: ScriptEnvConfig
+  onDone?: () => void
+  onError?: (error: Error) => void
+  onStart?: () => void
   scripts: ScriptConfig
 }
 

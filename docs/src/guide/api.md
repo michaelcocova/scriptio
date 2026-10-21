@@ -151,9 +151,15 @@ interface ScriptsContext {
 
 interface UserConfig {
   env?: ScriptEnvConfig;
+  duration?: boolean;
+  onStart?: () => void;
+  onDone?: () => void;
+  onError?: (error: Error) => void;
   scripts: ScriptConfig;
 }
 ```
+
+`duration` 默认为 `true`，控制是否打印 `HH:mm:ss.SSS` 格式的任务总耗时。`onStart` 在执行前调用，成功时调用 `onDone`，非零退出或异常时调用 `onError`。
 
 ## 导入类型示例
 

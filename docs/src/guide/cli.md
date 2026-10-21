@@ -101,6 +101,14 @@ Scriptio 使用 shell 执行最终命令，并继承标准输入输出：
 - 保留子命令的 stdout 和 stderr。
 - 子命令退出码会作为 Scriptio 的退出码。
 
+每次执行完成后，默认会在命令输出末尾打印任务总耗时，格式为 `HH:mm:ss.SSS`：
+
+```text
+build:test, 总耗时: 00:00:03.127
+```
+
+可在配置中设置 `duration: false` 关闭。脚本内部的 shell 子命令会计入外层脚本的总耗时，不会单独打印耗时。
+
 执行时会把当前目录和上级目录中的 `node_modules/.bin` 加入 PATH，方便直接调用项目本地 bin。
 
 ## 环境变量

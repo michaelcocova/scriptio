@@ -35,7 +35,44 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (!Object.hasOwn(config.scripts, script)) {
     throw new Error(`Unknown script "${script}".`)
   }
-  return runScript(config.scripts[script].command, cwd, resolveEnv(script, config.env))
+  const startedAt = process.hrtime.bigint()
+  let errorHookCalled = false
+  try {
+    config.onStart?.()
+    const code = await runScript(config.scripts[script].command, cwd, resolveEnv(script, config.env))
+    if (code === 0) {
+      config.onDone?.()
+    } else {
+      errorHookCalled = true
+      config.onError?.(new Error(`Script "${script}" exited with code ${code}`))
+    }
+    return code
+  } catch (cause) {
+    if (!errorHookCalled) {
+      errorHookCalled = true
+      config.onError?.(cause instanceof Error ? cause : new Error(String(cause)))
+    }
+    throw cause
+  } finally {
+    if (config.duration !== false) {
+      printDuration(script, process.hrtime.bigint() - startedAt, process.stdout.isTTY && !process.env.NO_COLOR)
+    }
+  }
+}
+
+function formatDuration(elapsedNanoseconds: bigint): string {
+  const milliseconds = elapsedNanoseconds / 1_000_000n
+  const hours = milliseconds / 3_600_000n
+  const minutes = milliseconds / 60_000n % 60n
+  const seconds = milliseconds / 1_000n % 60n
+  const remainder = milliseconds % 1_000n
+  return `${[hours, minutes, seconds].map(value => String(value).padStart(2, '0')).join(':')}.${String(remainder).padStart(3, '0')}`
+}
+
+function printDuration(script: string, elapsedNanoseconds: bigint, colors: boolean): void {
+  const line = `${script}, 总耗时: ${formatDuration(elapsedNanoseconds)}`
+  const output = colors ? `\x1B[1m\x1B[36m${line}\x1B[39m\x1B[22m` : line
+  process.stdout.write(`\n\n${output}\n\n`)
 }
 
 async function renderHelp(cwd: string, config: string | undefined, colors: boolean): Promise<string> {

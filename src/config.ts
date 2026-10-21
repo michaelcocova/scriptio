@@ -19,6 +19,14 @@ export async function loadConfig(cwd: string, configArg?: string): Promise<Omit<
     if (!config || typeof config !== 'object') {
       throw new Error('必须默认导出包含 scripts 的配置对象')
     }
+    if (config.duration !== undefined && typeof config.duration !== 'boolean') {
+      throw new Error('duration 必须是 boolean')
+    }
+    for (const key of ['onStart', 'onDone', 'onError'] as const) {
+      if (config[key] !== undefined && typeof config[key] !== 'function') {
+        throw new Error(`${key} 必须是 function`)
+      }
+    }
     // 仅在加载边界统一字符串和对象写法，执行与展示共用相同的最终定义。
     const scripts = Object.fromEntries(Object.entries(mergeScripts(config.scripts)).map(([name, script]) => [
       name,
@@ -35,7 +43,14 @@ export async function loadConfig(cwd: string, configArg?: string): Promise<Omit<
         }
       }
     }
-    return { env: config.env, scripts }
+    return {
+      duration: config.duration ?? true,
+      env: config.env,
+      onDone: config.onDone,
+      onError: config.onError,
+      onStart: config.onStart,
+      scripts,
+    }
   } catch (error) {
     throw new Error(`加载配置失败：${file}\n${error instanceof Error ? error.message : String(error)}`, { cause: error })
   }

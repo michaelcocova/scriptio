@@ -61,7 +61,7 @@ describe('真实 CLI / TypeScript 配置', () => {
   })
 
   it('直接调用时能够找到项目本地 bin', () => {
-    const cwd = fixture('export default { scripts: { local: "scriptio-local-check" } }')
+    const cwd = fixture('export default { duration: false, scripts: { local: "scriptio-local-check" } }')
     const binDir = join(cwd, 'node_modules', '.bin')
     mkdirSync(binDir, { recursive: true })
     const windows = process.platform === 'win32'
@@ -78,6 +78,7 @@ describe('真实 CLI / TypeScript 配置', () => {
     const cwd = fixture(importAPI + [
       'const apps = [\'sso\', \'admin\'] as const',
       'export default defineConfig({',
+      'duration: false,',
       'env: { \'*\': { REMOVE_ME: \'old\' }, \'build:*,!build:packages\': { NODE_OPTIONS: \'--max-old-space-size=8192\', KEEP: \'space value\', REMOVE_ME: undefined } },',
       'scripts: defineScripts(({ matrix }) => [',
       'matrix({',
@@ -117,12 +118,44 @@ describe('真实 CLI / TypeScript 配置', () => {
   })
 
   it('执行普通 maps，传递非零退出码及 shell 语法', () => {
-    const cwd = fixture('export default { scripts: [{ plain: "node ok.cjs && node fail.cjs" }] }')
+    const cwd = fixture('export default { duration: false, scripts: [{ plain: "node ok.cjs && node fail.cjs" }] }')
     writeFileSync(join(cwd, 'ok.cjs'), 'console.log("ordinary-script")')
     writeFileSync(join(cwd, 'fail.cjs'), 'process.exit(7)')
     const result = run(cwd, ['plain'])
     expect(result.stdout).toBe('ordinary-script\n')
     expect(result.status).toBe(7)
+  })
+
+  it('执行脚本时调用 hooks，并打印带毫秒的总耗时', () => {
+    const cwd = fixture(importAPI + [
+      'import { appendFileSync } from "node:fs"',
+      'export default defineConfig({',
+      'onStart: () => appendFileSync("hooks.log", "start\\n"),',
+      'onDone: () => appendFileSync("hooks.log", "done\\n"),',
+      'scripts: { task: "node task.mjs" },',
+      '})',
+    ].join('\n'))
+    writeFileSync(join(cwd, 'task.mjs'), 'console.log("run")')
+    const result = run(cwd, ['task'])
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout).toContain('run\n')
+    expect(result.stdout).toMatch(/\n\ntask, 总耗时: \d{2}:\d{2}:\d{2}\.\d{3}\n\n$/)
+    expect(readFileSync(join(cwd, 'hooks.log'), 'utf8')).toBe('start\ndone\n')
+  })
+
+  it('命令失败时调用 onError，并仍然打印总耗时', () => {
+    const cwd = fixture(importAPI + [
+      'import { appendFileSync } from "node:fs"',
+      'export default defineConfig({',
+      'onError: error => appendFileSync("hooks.log", error.message),',
+      'scripts: { task: "node fail.mjs" },',
+      '})',
+    ].join('\n'))
+    writeFileSync(join(cwd, 'fail.mjs'), 'process.exit(7)')
+    const result = run(cwd, ['task'])
+    expect(result.status).toBe(7)
+    expect(readFileSync(join(cwd, 'hooks.log'), 'utf8')).toBe('Script "task" exited with code 7')
+    expect(result.stdout).toMatch(/\n\ntask, 总耗时: \d{2}:\d{2}:\d{2}\.\d{3}\n\n$/)
   })
 
   it('未知脚本包括原型属性均失败；无 TTY 不隐式执行', () => {
@@ -172,6 +205,8 @@ describe('真实 CLI / TypeScript 配置', () => {
     ['export default {}', 'scripts'],
     ['export default { scripts: { build: () => "wrong" } }', 'string'],
     ['export default { scripts: {}, env: { "*": { KEY: 42 } } }', 'env'],
+    ['export default { duration: "yes", scripts: {} }', 'duration'],
+    ['export default { onStart: true, scripts: {} }', 'onStart'],
     ['export default { scripts: { build: { command: "echo ok", group: true } } }', 'group'],
     ['export default { scripts: { build: { command: "echo ok", label: "" } } }', 'label'],
     ['export default { scripts: { build: { label: "构建" } } }', 'string'],
@@ -203,7 +238,7 @@ describe.skipIf(process.platform === 'win32')('pOSIX 进程生命周期', () => 
     ].join('\n'))
     writeFileSync(join(cwd, 'parent.cjs'), [
       'const { spawn } = require(\'node:child_process\')',
-      'spawn(process.execPath, [\'stubborn.cjs\'], { stdio: \'inherit\' })',
+      'spawn(process.execPath, [\'stubborn.cjs\'], { detached: true, stdio: \'inherit\' })',
       'setInterval(() => {}, 1000)',
     ].join('\n'))
     writeFileSync(join(cwd, 'scriptio.config.ts'), `export default { scripts: { dev: ${JSON.stringify(nodeCommand('parent.cjs'))} } }`)
@@ -218,7 +253,7 @@ describe.skipIf(process.platform === 'win32')('pOSIX 进程生命周期', () => 
       pid = Number(readFileSync(join(cwd, 'descendant.pid'), 'utf8'))
       child.kill(signal)
       expect(await closed).toBe(signal === 'SIGINT' ? 130 : 143)
-      expect(existsSync(join(cwd, `received-${signal}`))).toBe(true)
+      await expect.poll(() => existsSync(join(cwd, `received-${signal}`)), { timeout: 2000 }).toBe(true)
       await expect.poll(() => {
         try {
           process.kill(pid!, 0)
